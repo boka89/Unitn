@@ -15,6 +15,8 @@ export struct AlbumItem {
     year: string,
     cover: image,
     has-cover: bool,
+    /// Server albums in the library: the kind of server (e.g. "Plex").
+    source: string,
 }
 
 export struct TrackItem {

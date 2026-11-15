@@ -106,7 +106,7 @@ export component AppWindow inherits Window {
     /// Phone: a server's albums (page 9) were opened from Sources, not Settings.
     property <bool> server-from-sources: false;
     /// Phone: which bottom tab is lit (-1: none).
-    property <int> active-tab: root.music-chips || (root.page == 5 && !root.album-from-server) ? 0
+    property <int> active-tab: root.music-chips || (root.page == 5 && !root.album-from-server-page) ? 0
         : root.page == 3 ? 1
         : root.page == 10 ? 2
         : (root.page == 11 || root.page == 8) && !root.np-group ? 3
@@ -208,6 +208,18 @@ export component AppWindow inherits Window {
     in property <string> server-status;
     in property <bool> server-loading;
     in property <bool> album-from-server: false;
+    /// The server album was opened from the library's Albums, not from a
+    /// server's own albums page (Back returns to Albums).
+    in property <bool> album-in-library: false;
+    property <bool> album-from-server-page: root.album-from-server && !root.album-in-library;
+    /// Source chips of the Music views: All, Phone, then each server.
+    in property <[string]> source-names;
+    in property <int> source-selected: 0;
+    /// Name of the server chosen with the source chips ("" = none).
+    in property <string> source-server-name;
+    callback select-source(int);
+    callback albums-visible(int, int);
+    callback server-albums-visible(int, int);
     in-out property <bool> server-dialog: false;
     in-out property <int> server-kind: 0;
     in property <string> server-dialog-status;
@@ -371,7 +383,7 @@ export component AppWindow inherits Window {
         if (root.fix-visible) { root.fix-cancel(); return true; }
         if (root.page == 2 && root.song-selection-count > 0) { root.clear-song-selection(); return true; }
         if (root.search-open) { root.search-open = false; keys.focus(); return true; }
-        if (root.page == 5) { root.page = root.album-from-server ? 9 : 0; return true; }
+        if (root.page == 5) { root.page = root.album-from-server-page ? 9 : 0; return true; }
         if (root.page == 10 && root.podcast-view == 1) { root.podcast-back(); return true; }
         if (root.page == 0 && root.albums-filtered) { root.show-all-albums(); return true; }
         if (!root.phone) {
@@ -499,7 +511,7 @@ export component AppWindow inherits Window {
                         NavItem {
                             icon: @image-url("icons/album.svg");
                             label: "Albums";
-                            selected: root.page == 0 || (root.page == 5 && !root.album-from-server);
+                            selected: root.page == 0 || (root.page == 5 && !root.album-from-server-page);
                             clicked => {
                                 if (root.albums-filtered) { root.show-all-albums(); }
                                 root.page = 0;
@@ -561,7 +573,7 @@ export component AppWindow inherits Window {
                         for server[i] in root.servers: NavItem {
                             icon: @image-url("icons/server.svg");
                             label: server.name;
-                            selected: (root.page == 9 || (root.page == 5 && root.album-from-server)) && root.current-server == i;
+                            selected: (root.page == 9 || (root.page == 5 && root.album-from-server-page)) && root.current-server == i;
                             clicked => {
                                 root.open-server(i);
                                 root.page = 9;
@@ -681,7 +693,7 @@ export component AppWindow inherits Window {
                                 icon-size: 18px;
                                 clicked => {
                                     if (root.page == 5) {
-                                        root.page = root.album-from-server ? 9 : 0;
+                                        root.page = root.album-from-server-page ? 9 : 0;
                                     } else {
                                         root.show-all-albums();
                                     }
@@ -810,6 +822,33 @@ export component AppWindow inherits Window {
                             clicked => {
                                 root.sources-in-music = true;
                                 root.page = 12;
+                            }
+                        }
+                    }
+                    // Phone: which music the Song / Album / Artist views show.
+                    if root.music-chips && root.page != 12 && root.source-names.length > 0: Rectangle {
+                        height: 44px;
+                        clip: true;
+                        src-chip-flick := Flickable {
+                            width: parent.width;
+                            height: 32px;
+                            y: 0px;
+                            content-width: src-chip-row.preferred-width;
+                            content-height: self.height;
+                            src-chip-row := HorizontalLayout {
+                                width: src-chip-flick.content-width;
+                                height: src-chip-flick.height;
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                spacing: 8px;
+                                alignment: start;
+                                Chip { text: "All"; selected: root.source-selected == 0; clicked => { root.select-source(0); } }
+                                Chip { text: "Phone"; selected: root.source-selected == 1; clicked => { root.select-source(1); } }
+                                for name[i] in root.source-names: Chip {
+                                    text: name;
+                                    selected: root.source-selected == i + 2;
+                                    clicked => { root.select-source(i + 2); }
+                                }
                             }
                         }
                     }
@@ -993,6 +1032,7 @@ export component AppWindow inherits Window {
                                 root.page = 5;
                             }
                             add-folder => { root.add-folder(); }
+                            covers-visible(first, last) => { root.albums-visible(first, last); }
                         }
                         if root.page == 9: ServerPage {
                             width: parent.width;
@@ -1006,6 +1046,7 @@ export component AppWindow inherits Window {
                                 root.page = 5;
                             }
                             refresh => { root.refresh-server(); }
+                            covers-visible(first, last) => { root.server-albums-visible(first, last); }
                         }
                         if root.page == 5: AlbumDetailPage {
                             width: parent.width;
@@ -1483,7 +1524,7 @@ export component AppWindow inherits Window {
                                         root.show-all-albums();
                                     }
                                     root.sources-in-music = true;
-                                    root.page = root.page == 5 && !root.album-from-server ? 0 : root.music-page;
+                                    root.page = root.page == 5 && !root.album-from-server-page ? 0 : root.music-page;
                                     return;
                                 }
                                 root.np-group = false;

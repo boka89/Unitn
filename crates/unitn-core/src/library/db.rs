@@ -6,6 +6,7 @@ use anyhow::Result;
 use rusqlite::{params, Connection, Row};
 
 use crate::model::{Album, Artist, Playlist, Station, Track};
+use crate::servers::ServerAlbum;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS folders (path TEXT PRIMARY KEY);
@@ -99,6 +100,20 @@ CREATE TABLE IF NOT EXISTS podcast_episodes (
     position    REAL NOT NULL DEFAULT 0,
     played      INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (feed_url, guid)
+);
+CREATE TABLE IF NOT EXISTS server_albums (
+    server    TEXT NOT NULL,
+    id        TEXT NOT NULL,
+    title     TEXT NOT NULL DEFAULT '',
+    artist    TEXT NOT NULL DEFAULT '',
+    year      INTEGER NOT NULL DEFAULT 0,
+    image_url TEXT,
+    PRIMARY KEY (server, id)
+);
+CREATE INDEX IF NOT EXISTS idx_server_albums_artist ON server_albums(artist);
+CREATE TABLE IF NOT EXISTS server_syncs (
+    server TEXT PRIMARY KEY,
+    synced INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stations (
     uuid    TEXT PRIMARY KEY,
@@ -405,22 +420,98 @@ impl Library {
 
     /// Albums, optionally only those of one (grouping) artist.
     pub fn albums(&self, artist: Option<&str>) -> Result<Vec<Album>> {
-        let filter = if artist.is_some() {
-            format!("WHERE {GROUP_ARTIST} = ?1")
-        } else {
-            String::new()
-        };
+        self.albums_matching(artist, None)
+    }
+
+    /// Albums of one (grouping) artist and/or whose title or artist
+    /// contains `query`.
+    pub fn albums_matching(&self, artist: Option<&str>, query: Option<&str>) -> Result<Vec<Album>> {
+        let q = query.map(str::trim).filter(|q| !q.is_empty()).map(like_pattern);
         let sql = format!(
             "SELECT {GROUP_ARTIST} AS ga, album, MAX(year), COUNT(*), MAX(cover), SUM(duration_ms)
-             FROM tracks {filter}
+             FROM tracks
+             WHERE (?1 IS NULL OR {GROUP_ARTIST} = ?1)
+               AND (?2 IS NULL OR album LIKE ?2 ESCAPE '\\' OR artist LIKE ?2 ESCAPE '\\'
+                    OR album_artist LIKE ?2 ESCAPE '\\')
              GROUP BY ga, album
              ORDER BY ga COLLATE NOCASE, MAX(year), album COLLATE NOCASE"
         );
         let mut st = self.conn.prepare(&sql)?;
-        let rows = match artist {
-            Some(a) => st.query_map(params![a], album_from_row)?.collect::<rusqlite::Result<Vec<_>>>()?,
-            None => st.query_map([], album_from_row)?.collect::<rusqlite::Result<Vec<_>>>()?,
-        };
+        let rows = st.query_map(params![artist, q], album_from_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    // ---- music server albums ---------------------------------------------
+
+    /// Replaces what is known about one server's albums (`server` is the
+    /// app's key for it) and records when that was.
+    pub fn replace_server_albums(&self, server: &str, albums: &[ServerAlbum], now: i64) -> Result<()> {
+        self.write(|db| {
+            db.conn.execute("DELETE FROM server_albums WHERE server = ?1", params![server])?;
+            let mut st = db.conn.prepare(
+                "INSERT OR REPLACE INTO server_albums (server, id, title, artist, year, image_url)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+            for a in albums {
+                st.execute(params![server, a.id, a.title, a.artist, a.year, a.image_url])?;
+            }
+            db.conn.execute(
+                "INSERT OR REPLACE INTO server_syncs (server, synced) VALUES (?1, ?2)",
+                params![server, now],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// When the albums of a server were last saved, if ever.
+    pub fn server_synced(&self, server: &str) -> Result<Option<i64>> {
+        let mut st = self.conn.prepare("SELECT synced FROM server_syncs WHERE server = ?1")?;
+        let mut rows = st.query(params![server])?;
+        Ok(match rows.next()? {
+            Some(r) => Some(r.get(0)?),
+            None => None,
+        })
+    }
+
+    /// Forgets the albums of a server that was removed.
+    pub fn forget_server(&self, server: &str) -> Result<()> {
+        self.write(|db| {
+            db.conn.execute("DELETE FROM server_albums WHERE server = ?1", params![server])?;
+            db.conn.execute("DELETE FROM server_syncs WHERE server = ?1", params![server])?;
+            Ok(())
+        })
+    }
+
+    /// Saved server albums as (server key, album), optionally only one
+    /// server's, one artist's (ignoring case), and/or those whose title or
+    /// artist contains `query`. Sorted like the local albums.
+    pub fn server_albums(
+        &self,
+        server: Option<&str>,
+        artist: Option<&str>,
+        query: Option<&str>,
+    ) -> Result<Vec<(String, ServerAlbum)>> {
+        let q = query.map(str::trim).filter(|q| !q.is_empty()).map(like_pattern);
+        let sql = "SELECT server, id, title, artist, year, image_url FROM server_albums
+             WHERE (?1 IS NULL OR server = ?1)
+               AND (?2 IS NULL OR artist = ?2 COLLATE NOCASE)
+               AND (?3 IS NULL OR title LIKE ?3 ESCAPE '\\' OR artist LIKE ?3 ESCAPE '\\')
+             ORDER BY artist COLLATE NOCASE, year, title COLLATE NOCASE";
+        let mut st = self.conn.prepare(sql)?;
+        let rows = st
+            .query_map(params![server, artist, q], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    ServerAlbum {
+                        id: r.get(1)?,
+                        title: r.get(2)?,
+                        artist: r.get(3)?,
+                        year: r.get::<_, i64>(4)?.max(0) as u32,
+                        image_url: r.get(5)?,
+                    },
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -1157,5 +1248,51 @@ mod tests {
         assert_eq!(albums.len(), 1);
         assert_eq!((albums[0].artist.as_str(), albums[0].title.as_str(), albums[0].year), ("NIN", "Ghosts", 2008));
         assert_eq!(albums[0].cover.as_deref(), Some(Path::new("/c/x.jpg")));
+    }
+
+    #[test]
+    fn server_albums_are_saved_filtered_and_replaced() {
+        let db = Library::open_in_memory().unwrap();
+        let album = |id: &str, title: &str, artist: &str, year: u32| ServerAlbum {
+            id: id.into(),
+            title: title.into(),
+            artist: artist.into(),
+            year,
+            image_url: Some(format!("http://s/{id}.jpg")),
+        };
+        assert_eq!(db.server_synced("plex").unwrap(), None);
+        db.replace_server_albums("plex", &[album("2", "Kid A", "Radiohead", 2000), album("1", "OK Computer", "Radiohead", 1997)], 100)
+            .unwrap();
+        db.replace_server_albums("jf", &[album("9", "Blue", "Joni Mitchell", 1971)], 200).unwrap();
+        assert_eq!(db.server_synced("plex").unwrap(), Some(100));
+
+        let all = db.server_albums(None, None, None).unwrap();
+        let titles: Vec<&str> = all.iter().map(|(_, a)| a.title.as_str()).collect();
+        assert_eq!(titles, ["Blue", "OK Computer", "Kid A"]);
+        assert_eq!(db.server_albums(Some("jf"), None, None).unwrap().len(), 1);
+        assert_eq!(db.server_albums(None, Some("radiohead"), None).unwrap().len(), 2);
+        let found = db.server_albums(None, None, Some("kid")).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, "plex");
+        assert_eq!(found[0].1.image_url.as_deref(), Some("http://s/2.jpg"));
+
+        db.replace_server_albums("plex", &[album("3", "Amnesiac", "Radiohead", 2001)], 300).unwrap();
+        assert_eq!(db.server_albums(Some("plex"), None, None).unwrap().len(), 1);
+        db.forget_server("plex").unwrap();
+        assert!(db.server_albums(Some("plex"), None, None).unwrap().is_empty());
+        assert_eq!(db.server_synced("plex").unwrap(), None);
+    }
+
+    #[test]
+    fn albums_can_be_searched() {
+        let db = Library::open_in_memory().unwrap();
+        db.upsert_track(&track("/m/a.mp3", "One", "Metallica", "...And Justice for All", 1), 1).unwrap();
+        db.upsert_track(&track("/m/b.mp3", "Two", "Muse", "Absolution", 1), 1).unwrap();
+        let found = db.albums_matching(None, Some("justice")).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].artist, "Metallica");
+        assert_eq!(db.albums_matching(Some("Muse"), Some("abso")).unwrap().len(), 1);
+        assert!(db.albums_matching(Some("Muse"), Some("justice")).unwrap().is_empty());
+        assert_eq!(db.albums_matching(None, None).unwrap().len(), 2);
     }
 }

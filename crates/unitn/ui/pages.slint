@@ -79,6 +79,22 @@ component AlbumCard inherits Rectangle {
                 source: root.item.cover;
                 has-image: root.item.has-cover;
             }
+            // Albums on a music server: a small label with the server kind.
+            if root.item.source != "": Rectangle {
+                x: 6px;
+                y: 6px;
+                width: badge-text.preferred-width + 12px;
+                height: 20px;
+                border-radius: 10px;
+                background: #000000a0;
+                badge-text := Text {
+                    text: root.item.source;
+                    color: white;
+                    font-size: 10px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
             // The album that is playing: accent outline and a badge.
             if root.playing: Rectangle {
                 border-radius: 10px;
@@ -140,6 +156,8 @@ export component AlbumsPage inherits Rectangle {
     in property <string> playing-album;
     callback open-album(int);
     callback add-folder();
+    /// The covers from the first to the last index are (about to be) on screen.
+    callback covers-visible(int, int);
 
     // Phone: the covers share the width (two or more per row).
     property <int> cols: Theme.phone
@@ -150,11 +168,21 @@ export component AlbumsPage inherits Rectangle {
     property <length> cell-h: root.art + 80px;
     property <length> left: Theme.phone ? 8px : 20px;
 
+    function report-visible(top: length, height: length) {
+        // One row above and below what is on screen.
+        root.covers-visible(
+            Math.max(0, Math.floor(top / root.cell-h) - 1) * root.cols,
+            (Math.ceil((top + height) / root.cell-h) + 1) * root.cols - 1);
+    }
+
     if root.albums.length > 0: ScrollView {
         width: parent.width;
         height: parent.height;
         content-width: self.visible-width;
         content-height: Math.ceil(root.albums.length / root.cols) * root.cell-h + 32px;
+        init => { root.report-visible(-self.viewport-y, self.height); }
+        changed viewport-y => { root.report-visible(-self.viewport-y, self.height); }
+        changed height => { root.report-visible(-self.viewport-y, self.height); }
         for album[i] in root.albums: AlbumCard {
             x: root.left + Math.mod(i, root.cols) * root.cell-w;
             y: 8px + Math.floor(i / root.cols) * root.cell-h;
@@ -1431,6 +1459,7 @@ export component ServerPage inherits Rectangle {
     in property <string> playing-album;
     callback open-album(int);
     callback refresh();
+    callback covers-visible(int, int);
 
     VerticalLayout {
         HorizontalLayout {
@@ -1465,6 +1494,7 @@ export component ServerPage inherits Rectangle {
                 scanning: false;
                 playing-album: root.playing-album;
                 open-album(i) => { root.open-album(i); }
+                covers-visible(first, last) => { root.covers-visible(first, last); }
             }
             if root.albums.length == 0: Text {
                 text: root.loading ? "Loading albums…" : "No albums";
