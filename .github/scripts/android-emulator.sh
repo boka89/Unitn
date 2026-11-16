@@ -149,6 +149,9 @@ tap 224 1485 3; shot phone-add-server                         # Settings -> Add 
 tap 400 321 2; shot phone-add-server-plex                     # its Plex tab
 # Typing an address: tap the box, type with the on-screen keyboard.
 tap 538 438 2; adb shell input text "192.168.1.5"; sleep 1; shot phone-add-server-typed
+# The same with the on-screen keyboard's own keys (text arrives through the
+# input method, not as key events): q, w, e.
+tap 50 1688 1; tap 160 1688 1; tap 268 1688 1; sleep 1; shot phone-add-server-ime
 adb shell dumpsys input_method | grep -m3 -E "mInputShown|mServedView|mCurFocusedWindowClient" > "$OUT/ime.txt" || true
 tap 513 713 2                                                 # Cancel closes the dialog
 # Another song plays by now: Like it, then tap again to take the like back.
