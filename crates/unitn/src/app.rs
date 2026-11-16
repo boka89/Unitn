@@ -1149,7 +1149,6 @@ impl App {
                 _ => None,
             };
             let known: HashSet<String> = self.settings.servers.iter().map(server_key).collect();
-            let covers_dir = self.paths.covers.join("servers");
             for (key, sa) in self.library.server_albums(only, artist, q).unwrap_or_default() {
                 if !known.contains(&key) {
                     continue;
@@ -1160,7 +1159,8 @@ impl App {
                     year: sa.year,
                     track_count: 0,
                     duration_ms: 0,
-                    cover: scanner::cached_cover(&covers_dir, &server_cover_key(&key, &sa.id)),
+                    // Looked up when the album scrolls into view.
+                    cover: None,
                 };
                 out.push((album, Some((key, sa))));
             }
@@ -1195,7 +1195,13 @@ impl App {
             }
         }
         if self.music_source != MusicSource::Phone {
-            for (_, sa) in self.library_albums(None).into_iter().filter_map(|(_, o)| o) {
+            let only = match &self.music_source {
+                MusicSource::Server(k) => Some(k.as_str()),
+                _ => None,
+            };
+            let known: HashSet<String> = self.settings.servers.iter().map(server_key).collect();
+            let saved = self.library.server_albums(only, None, None).unwrap_or_default();
+            for (_, sa) in saved.into_iter().filter(|(k, _)| known.contains(k)) {
                 let name = if sa.artist.is_empty() { "Unknown Artist".to_string() } else { sa.artist };
                 add(Artist { name, album_count: 1, track_count: 0 }, &mut by_name);
             }
@@ -2167,7 +2173,6 @@ impl App {
         let Some(cfg) = self.server.index.and_then(|i| self.settings.servers.get(i)).cloned() else { return };
         let key = server_key(&cfg);
         let all = self.server.cache.get(&key).cloned().unwrap_or_default();
-        let covers_dir = self.paths.covers.join("servers");
         let items: Vec<AlbumItem> = all
             .iter()
             .map(|a| {
@@ -2175,7 +2180,6 @@ impl App {
                     title: a.title.clone(),
                     artist: a.artist.clone(),
                     year: a.year,
-                    cover: scanner::cached_cover(&covers_dir, &server_cover_key(&key, &a.id)),
                     ..Default::default()
                 };
                 self.album_item_lazy(&album)
@@ -2241,7 +2245,16 @@ impl App {
         let end = last.min(self.album_origins.len().saturating_sub(1));
         for i in first..=end {
             let Some(Some((key, sa))) = self.album_origins.get(i).cloned() else { continue };
-            let cover = self.albums.get(i).and_then(|a| a.cover.clone());
+            let cover = match self.albums.get(i).and_then(|a| a.cover.clone()) {
+                Some(c) => Some(c),
+                None => {
+                    let found = scanner::cached_cover(&self.paths.covers.join("servers"), &server_cover_key(&key, &sa.id));
+                    if let (Some(album), Some(c)) = (self.albums.get_mut(i), &found) {
+                        album.cover = Some(c.clone());
+                    }
+                    found
+                }
+            };
             self.show_or_fetch_cover(&model, i, &key, &sa, cover);
         }
     }
