@@ -56,6 +56,11 @@ ls -la "$STAGE/dex"
 # Start from the desktop lock file, so both builds use the same crate versions;
 # cargo only adds what Android needs on top.
 cp Cargo.lock crates/unitn-android/Cargo.lock
+# Crates the Android build takes from elsewhere ([patch.crates-io] in its
+# Cargo.toml, e.g. Slint with the SwiftKey fix): move the lock to them.
+if grep -q '^\[patch.crates-io\]' crates/unitn-android/Cargo.toml; then
+  (cd crates/unitn-android && cargo update -p slint -p slint-build)
+fi
 targets=()
 for abi in $ABIS; do targets+=(-t "$abi"); done
 extra=()
