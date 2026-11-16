@@ -25,6 +25,21 @@ STAGE="$OUT/stage"
 
 : "${ANDROID_HOME:?Set ANDROID_HOME to the Android SDK folder}"
 export ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)}}
+# Slint from git (see [patch.crates-io] in crates/unitn-android/Cargo.toml)
+# brings Skia 0.157, whose prebuilt library needs the libc++ of NDK r29 or
+# newer; older NDKs build an APK that crashes on start (missing
+# std::__hash_memory).
+if grep -q '^\[patch.crates-io\]' crates/unitn-android/Cargo.toml; then
+  ndk_major=$(basename "$ANDROID_NDK_HOME" | cut -d. -f1)
+  if [ "${ndk_major:-0}" -lt 29 ] 2>/dev/null; then
+    sdkmanager=$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)
+    ndk_pkg=$("$sdkmanager" --list 2>/dev/null | grep -o 'ndk;29\.[0-9.]*' | sort -V | tail -1)
+    [ -n "$ndk_pkg" ] || { echo "No NDK r29 in sdkmanager --list" >&2; exit 1; }
+    echo "Installing $ndk_pkg for Skia 0.157"
+    "$sdkmanager" --install "$ndk_pkg" < <(printf 'y\n%.0s' {1..20}) >/dev/null
+    export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/${ndk_pkg#ndk;}"
+  fi
+fi
 BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
 PLATFORM="$ANDROID_HOME/platforms/android-$TARGET_SDK"
 [ -f "$PLATFORM/android.jar" ] || PLATFORM=$(ls -d "$ANDROID_HOME"/platforms/android-[0-9][0-9] | sort -V | tail -1)
