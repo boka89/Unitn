@@ -60,6 +60,11 @@ cp Cargo.lock crates/unitn-android/Cargo.lock
 # Cargo.toml, e.g. Slint with the SwiftKey fix): move the lock to them.
 if grep -q '^\[patch.crates-io\]' crates/unitn-android/Cargo.toml; then
   (cd crates/unitn-android && cargo update -p slint -p slint-build)
+  # bindgen 0.73 accepts syn 2 or 3 and then mixes them; keep prettyplease
+  # on syn 3 like the rest.
+  if grep -q '^name = "prettyplease"' crates/unitn-android/Cargo.lock; then
+    (cd crates/unitn-android && cargo update -p prettyplease --precise 0.3.0)
+  fi
 fi
 targets=()
 for abi in $ABIS; do targets+=(-t "$abi"); done
