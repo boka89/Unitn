@@ -1987,16 +1987,26 @@ impl App {
                 let opened = open_in_browser(&pin.auth_url);
                 let _ = tx.send(Bg::PlexWaiting { login, code: pin.link_code.clone(), opened });
                 let deadline = std::time::Instant::now() + Duration::from_secs(15 * 60);
+                let mut last_err = None;
                 let token = loop {
                     thread::sleep(Duration::from_secs(2));
                     if !alive() {
                         return Ok(None);
                     }
                     if std::time::Instant::now() > deadline {
-                        anyhow::bail!("The Plex sign-in timed out. Please try again.");
+                        return Err(last_err.unwrap_or_else(|| anyhow::anyhow!("The Plex sign-in timed out. Please try again.")));
                     }
-                    if let Some(token) = servers::plex_pin_token(&pin)? {
-                        break token;
+                    match servers::plex_pin_token(&pin) {
+                        Ok(Some(token)) => break token,
+                        Ok(None) => {}
+                        Err(e) if e.to_string().contains("expired") => return Err(e),
+                        // While the browser is in front, Android may cut this
+                        // app off the network (data saver, battery saving):
+                        // keep asking until the user comes back.
+                        Err(e) => {
+                            log(format!("servers: Plex sign-in check failed, retrying: {e:#}"));
+                            last_err = Some(e);
+                        }
                     }
                 };
                 log("servers: Plex sign-in approved, connecting");
