@@ -190,6 +190,10 @@ pub fn search_tracks(cfg: &ServerConfig, query: &str) -> Result<Vec<Track>> {
 /// The address a server song streams from, with the current credentials.
 /// `stream_ref` is what [`stream_ref`] returned (a path without tokens).
 pub fn stream_url(cfg: &ServerConfig, stream_ref: &str) -> String {
+    if cfg.kind == ServerKind::Plex && cfg.token.is_empty() {
+        // A Plex server that lets the home network in without signing in.
+        return format!("{}{stream_ref}", cfg.url);
+    }
     let sep = if stream_ref.contains('?') { '&' } else { '?' };
     let auth = match cfg.kind {
         ServerKind::Jellyfin => format!("deviceId={}&api_key={}", cfg.device_id, cfg.token),
@@ -208,7 +212,8 @@ pub fn stream_ref(cfg: &ServerConfig, stream_url: &str) -> Option<String> {
         ServerKind::Plex => "X-Plex-Token=",
         ServerKind::Subsonic => "u=",
     };
-    let cut = ['?', '&'].iter().filter_map(|c| rest.find(&format!("{c}{marker}"))).min()?;
+    // No credentials in the address (Plex without sign-in): keep all of it.
+    let cut = ['?', '&'].iter().filter_map(|c| rest.find(&format!("{c}{marker}"))).min().unwrap_or(rest.len());
     Some(rest[..cut].to_string())
 }
 
@@ -250,6 +255,11 @@ pub fn plex_pin_token(pin: &PlexPin) -> Result<Option<String>> {
 /// Connects to a Plex server with the account token from the browser
 /// sign-in. With an empty `url` the user's servers are looked up on plex.tv
 /// and the first reachable one with a music library is used.
+/// Plex without signing in, for servers that let the home network in.
+pub fn plex_connect_open(url: &str) -> Result<ServerConfig> {
+    plex::connect_open(&normalize_url(url, ServerKind::Plex), new_device_id())
+}
+
 pub fn plex_connect_account(url: &str, account_token: &str, device_id: String) -> Result<ServerConfig> {
     let url = if url.trim().is_empty() { String::new() } else { normalize_url(url, ServerKind::Plex) };
     plex::connect_account(&url, account_token, device_id)
@@ -495,9 +505,11 @@ mod plex {
         let mut req = agent()
             .get(&format!("{}{path}", cfg.url))
             .set("Accept", "application/json")
-            .set("X-Plex-Token", &cfg.token)
             .set("X-Plex-Client-Identifier", &cfg.device_id)
             .set("X-Plex-Product", PRODUCT);
+        if !cfg.token.is_empty() {
+            req = req.set("X-Plex-Token", &cfg.token);
+        }
         for (k, v) in query {
             req = req.query(k, v);
         }
@@ -530,6 +542,13 @@ mod plex {
             token
         };
         finish(url, user, token, device_id)
+    }
+
+    /// Plex can let chosen networks in without signing in ("List of IP
+    /// addresses and networks that are allowed without auth"). Try that
+    /// first; fails if the server wants a sign-in.
+    pub fn connect_open(url: &str, device_id: String) -> Result<ServerConfig> {
+        finish(url, "", String::new(), device_id)
     }
 
     fn plex_tv(method: &str, path: &str, device_id: &str) -> ureq::Request {
@@ -771,12 +790,15 @@ mod plex {
             .filter_map(|it| {
                 let id = it["ratingKey"].as_str()?.to_string();
                 let image_url = it["thumb"].as_str().map(|thumb| {
-                    format!(
-                        "{}/photo/:/transcode?width=400&height=400&minSize=1&upscale=1&url={}&X-Plex-Token={}",
+                    let mut url = format!(
+                        "{}/photo/:/transcode?width=400&height=400&minSize=1&upscale=1&url={}",
                         cfg.url,
-                        percent_encode(thumb),
-                        cfg.token
-                    )
+                        percent_encode(thumb)
+                    );
+                    if !cfg.token.is_empty() {
+                        url.push_str(&format!("&X-Plex-Token={}", cfg.token));
+                    }
+                    url
                 });
                 Some(ServerAlbum {
                     title: it["title"].as_str().filter(|n| !n.is_empty()).unwrap_or("Unknown Album").to_string(),
@@ -1077,6 +1099,18 @@ mod tests {
         assert_eq!(super::plex_direct_ip("plex.direct"), None);
         assert_eq!(super::plex_direct_ip("nas.example.com"), None);
         assert!(resolve("127.0.0.1:80").unwrap().contains(&"127.0.0.1:80".parse().unwrap()));
+    }
+
+    #[test]
+    fn plex_without_sign_in_sends_no_token() {
+        let mut c = cfg(ServerKind::Plex);
+        c.token.clear();
+        let url = stream_url(&c, "/library/parts/5/123/file.flac");
+        assert_eq!(url, format!("{}/library/parts/5/123/file.flac", c.url));
+        assert_eq!(stream_ref(&c, &url).as_deref(), Some("/library/parts/5/123/file.flac"));
+        let json = serde_json::json!({"MediaContainer": {"Metadata": [{"ratingKey": "7", "title": "A", "thumb": "/t/7"}]}});
+        let albums = plex::parse_albums(&c, &json);
+        assert!(!albums[0].image_url.as_deref().unwrap().contains("X-Plex-Token"));
     }
 
     #[test]

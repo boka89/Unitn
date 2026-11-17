@@ -1977,12 +1977,27 @@ impl App {
         let login = self.plex_login.fetch_add(1, Ordering::SeqCst) + 1;
         if let Some(ui) = self.ui() {
             ui.set_server_connecting(true);
-            ui.set_server_dialog_status("Opening the Plex sign-in page…".into());
+            let status = if url.trim().is_empty() { "Opening the Plex sign-in page…" } else { "Connecting to Plex…" };
+            ui.set_server_dialog_status(status.into());
         }
         let (tx, current) = (self.bg_tx.clone(), self.plex_login.clone());
         thread::spawn(move || {
             let alive = || current.load(Ordering::SeqCst) == login;
             let result = (|| -> anyhow::Result<Option<ServerConfig>> {
+                // With an address, first try without signing in: Plex can let
+                // the home network in without one.
+                if !url.trim().is_empty() {
+                    match servers::plex_connect_open(&url) {
+                        Ok(cfg) => {
+                            log("servers: Plex lets us in without signing in");
+                            return Ok(Some(cfg));
+                        }
+                        Err(e) => log(format!("servers: Plex without sign-in: {e:#}")),
+                    }
+                    if !alive() {
+                        return Ok(None);
+                    }
+                }
                 let pin = servers::plex_pin_start()?;
                 let opened = open_in_browser(&pin.auth_url);
                 let _ = tx.send(Bg::PlexWaiting { login, code: pin.link_code.clone(), opened });
