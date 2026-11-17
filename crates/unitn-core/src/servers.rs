@@ -352,6 +352,27 @@ pub fn albums(cfg: &ServerConfig) -> Result<Vec<ServerAlbum>> {
     Ok(list)
 }
 
+/// Every song on the server, for the library index. Fetched in pages.
+/// Servers that can't list all songs at once are asked album by album.
+pub fn all_tracks(cfg: &ServerConfig, albums: &[ServerAlbum]) -> Result<Vec<Track>> {
+    let tracks = match cfg.kind {
+        ServerKind::Jellyfin => jellyfin::all_tracks(cfg)?,
+        ServerKind::Plex => plex::all_tracks(cfg)?,
+        ServerKind::Subsonic => subsonic::all_tracks(cfg)?,
+    };
+    if !tracks.is_empty() || albums.is_empty() {
+        return Ok(tracks);
+    }
+    let mut tracks = Vec::new();
+    for album in albums {
+        tracks.extend(album_tracks(cfg, album)?);
+    }
+    Ok(tracks)
+}
+
+/// Songs per request when listing a whole library.
+const PAGE: usize = 2000;
+
 /// The songs of an album, in disc and track order, ready to play.
 pub fn album_tracks(cfg: &ServerConfig, album: &ServerAlbum) -> Result<Vec<Track>> {
     let mut tracks = match cfg.kind {
@@ -508,6 +529,31 @@ mod jellyfin {
             ],
         )?;
         Ok(parse_tracks(cfg, Some(album), &json))
+    }
+
+    pub fn all_tracks(cfg: &ServerConfig) -> Result<Vec<Track>> {
+        let mut out = Vec::new();
+        loop {
+            let start = out.len().to_string();
+            let json = get(
+                cfg,
+                "/Items",
+                &[
+                    ("userId", &cfg.user_id),
+                    ("IncludeItemTypes", "Audio"),
+                    ("Recursive", "true"),
+                    ("StartIndex", &start),
+                    ("Limit", &PAGE.to_string()),
+                    ("Fields", "ProductionYear,Container"),
+                ],
+            )?;
+            let page = parse_tracks(cfg, None, &json);
+            let n = page.len();
+            out.extend(page);
+            if n < PAGE {
+                return Ok(out);
+            }
+        }
     }
 
     pub fn search(cfg: &ServerConfig, query: &str) -> Result<Vec<Track>> {
@@ -892,6 +938,32 @@ mod plex {
         Ok(parse_tracks(cfg, Some(album), &json["MediaContainer"]["Metadata"]))
     }
 
+    pub fn all_tracks(cfg: &ServerConfig) -> Result<Vec<Track>> {
+        let mut out = Vec::new();
+        for section in music_sections(cfg)? {
+            let mut start = 0usize;
+            loop {
+                let json = get(
+                    cfg,
+                    &format!("/library/sections/{section}/all"),
+                    &[
+                        ("type", "10"),
+                        ("X-Plex-Container-Start", &start.to_string()),
+                        ("X-Plex-Container-Size", &PAGE.to_string()),
+                    ],
+                )?;
+                let page = parse_tracks(cfg, None, &json["MediaContainer"]["Metadata"]);
+                let n = page.len();
+                out.extend(page);
+                start += PAGE;
+                if n < PAGE {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     pub fn search(cfg: &ServerConfig, query: &str) -> Result<Vec<Track>> {
         let json = get(cfg, "/hubs/search", &[("query", query), ("limit", "50")])?;
         Ok(parse_search(cfg, &json))
@@ -1059,6 +1131,32 @@ mod subsonic {
     pub fn album_tracks(cfg: &ServerConfig, album: &ServerAlbum) -> Result<Vec<Track>> {
         let json = get(cfg, "getAlbum", &[("id", &album.id)])?;
         Ok(parse_songs(cfg, Some(album), &json["album"]["song"]))
+    }
+
+    /// OpenSubsonic servers list every song for an empty search; older
+    /// ones find nothing (then the caller goes album by album).
+    pub fn all_tracks(cfg: &ServerConfig) -> Result<Vec<Track>> {
+        const SONGS: usize = 500;
+        let mut out = Vec::new();
+        loop {
+            let offset = out.len().to_string();
+            let json = get(
+                cfg,
+                "search3",
+                &[("query", ""), ("songCount", &SONGS.to_string()), ("songOffset", &offset), ("albumCount", "0"), ("artistCount", "0")],
+            )?;
+            let page = parse_songs(cfg, None, &json["searchResult3"]["song"]);
+            let n = page.len();
+            // A server that ignores the offset sends the same page again.
+            let repeated = n > 0 && out.iter().any(|t: &Track| t.path == page[0].path);
+            if repeated {
+                return Ok(out);
+            }
+            out.extend(page);
+            if n < SONGS || out.len() > 500_000 {
+                return Ok(out);
+            }
+        }
     }
 
     pub fn search(cfg: &ServerConfig, query: &str) -> Result<Vec<Track>> {

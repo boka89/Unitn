@@ -111,6 +111,22 @@ CREATE TABLE IF NOT EXISTS server_albums (
     PRIMARY KEY (server, id)
 );
 CREATE INDEX IF NOT EXISTS idx_server_albums_artist ON server_albums(artist);
+CREATE TABLE IF NOT EXISTS server_tracks (
+    server       TEXT NOT NULL,
+    path         TEXT NOT NULL,
+    title        TEXT NOT NULL DEFAULT '',
+    artist       TEXT NOT NULL DEFAULT '',
+    album        TEXT NOT NULL DEFAULT '',
+    album_artist TEXT NOT NULL DEFAULT '',
+    track_no     INTEGER NOT NULL DEFAULT 0,
+    disc_no      INTEGER NOT NULL DEFAULT 0,
+    year         INTEGER NOT NULL DEFAULT 0,
+    duration_ms  INTEGER NOT NULL DEFAULT 0,
+    cover        TEXT,
+    stream_ext   TEXT,
+    stream_ref   TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (server, path)
+);
 CREATE TABLE IF NOT EXISTS server_syncs (
     server TEXT PRIMARY KEY,
     synced INTEGER NOT NULL
@@ -473,10 +489,87 @@ impl Library {
         })
     }
 
+    /// Replaces the saved songs of one server. Each song comes with its
+    /// stream address without credentials (see `servers::stream_ref`).
+    pub fn replace_server_tracks(&self, server: &str, tracks: &[(Track, String)]) -> Result<()> {
+        self.write(|db| {
+            db.conn.execute("DELETE FROM server_tracks WHERE server = ?1", params![server])?;
+            let mut st = db.conn.prepare(
+                "INSERT OR REPLACE INTO server_tracks
+                 (server, path, title, artist, album, album_artist, track_no, disc_no, year, duration_ms, cover, stream_ext, stream_ref)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            )?;
+            for (t, stream_ref) in tracks {
+                st.execute(params![
+                    server,
+                    t.path.to_string_lossy(),
+                    t.title,
+                    t.artist,
+                    t.album,
+                    t.album_artist,
+                    t.track_no,
+                    t.disc_no,
+                    t.year,
+                    t.duration_ms as i64,
+                    t.cover.as_ref().map(|c| c.to_string_lossy().into_owned()),
+                    t.stream_ext,
+                    stream_ref
+                ])?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Saved server songs as (server key, song, stream ref), optionally only
+    /// one server's and/or those whose title, artist or album contains
+    /// `query`. Sorted like the local songs. `stream_url` is left empty: the
+    /// caller adds it with the server's current credentials.
+    pub fn server_tracks(&self, server: Option<&str>, query: Option<&str>) -> Result<Vec<(String, Track, String)>> {
+        let q = query.map(str::trim).filter(|q| !q.is_empty()).map(like_pattern);
+        let sql = format!(
+            "SELECT server, stream_ref, {REMOTE_COLS} FROM server_tracks
+             WHERE (?1 IS NULL OR server = ?1)
+               AND (?2 IS NULL OR title LIKE ?2 ESCAPE '\\' OR artist LIKE ?2 ESCAPE '\\'
+                    OR album LIKE ?2 ESCAPE '\\' OR album_artist LIKE ?2 ESCAPE '\\')
+             ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, disc_no, track_no, title COLLATE NOCASE"
+        );
+        let mut st = self.conn.prepare(&sql)?;
+        let rows = st
+            .query_map(params![server, q], |r| {
+                let server: String = r.get(0)?;
+                let stream_ref: String = r.get(1)?;
+                // The track columns start after the two above.
+                let t = Track {
+                    path: PathBuf::from(r.get::<_, String>(2)?),
+                    title: r.get(3)?,
+                    artist: r.get(4)?,
+                    album: r.get(5)?,
+                    album_artist: r.get(6)?,
+                    track_no: r.get::<_, i64>(7)? as u32,
+                    disc_no: r.get::<_, i64>(8)? as u32,
+                    year: r.get::<_, i64>(9)? as u32,
+                    duration_ms: r.get::<_, i64>(10)?.max(0) as u64,
+                    cover: r.get::<_, Option<String>>(11)?.map(PathBuf::from),
+                    stream_ext: r.get(12)?,
+                    ..Default::default()
+                };
+                Ok((server, t, stream_ref))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// True if songs of this server are saved.
+    pub fn server_has_tracks(&self, server: &str) -> Result<bool> {
+        let mut st = self.conn.prepare_cached("SELECT EXISTS(SELECT 1 FROM server_tracks WHERE server = ?1)")?;
+        Ok(st.query_row(params![server], |r| r.get(0))?)
+    }
+
     /// Forgets the albums of a server that was removed.
     pub fn forget_server(&self, server: &str) -> Result<()> {
         self.write(|db| {
             db.conn.execute("DELETE FROM server_albums WHERE server = ?1", params![server])?;
+            db.conn.execute("DELETE FROM server_tracks WHERE server = ?1", params![server])?;
             db.conn.execute("DELETE FROM server_syncs WHERE server = ?1", params![server])?;
             Ok(())
         })
@@ -1248,6 +1341,34 @@ mod tests {
         assert_eq!(albums.len(), 1);
         assert_eq!((albums[0].artist.as_str(), albums[0].title.as_str(), albums[0].year), ("NIN", "Ghosts", 2008));
         assert_eq!(albums[0].cover.as_deref(), Some(Path::new("/c/x.jpg")));
+    }
+
+    #[test]
+    fn server_tracks_are_saved_filtered_and_replaced() {
+        let db = Library::open_in_memory().unwrap();
+        let song = |path: &str, title: &str, artist: &str| Track {
+            path: PathBuf::from(path),
+            title: title.into(),
+            artist: artist.into(),
+            album: "Album".into(),
+            duration_ms: 1000,
+            stream_ext: Some("flac".into()),
+            ..Default::default()
+        };
+        db.replace_server_tracks("plex", &[(song("plex://a/1", "Airbag", "Radiohead"), "/p/1".into())]).unwrap();
+        db.replace_server_tracks("jf", &[(song("jf://b/2", "Blue", "Joni Mitchell"), "/p/2".into())]).unwrap();
+        assert_eq!(db.server_tracks(None, None).unwrap().len(), 2);
+        let found = db.server_tracks(None, Some("radio")).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, "plex");
+        assert_eq!(found[0].1.title, "Airbag");
+        assert_eq!(found[0].1.stream_ext.as_deref(), Some("flac"));
+        assert_eq!(found[0].2, "/p/1");
+        assert_eq!(db.server_tracks(Some("jf"), None).unwrap()[0].1.title, "Blue");
+        db.replace_server_tracks("plex", &[]).unwrap();
+        assert!(db.server_tracks(Some("plex"), None).unwrap().is_empty());
+        db.forget_server("jf").unwrap();
+        assert!(db.server_tracks(None, None).unwrap().is_empty());
     }
 
     #[test]

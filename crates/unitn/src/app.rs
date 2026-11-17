@@ -85,6 +85,8 @@ enum Bg {
     ServerCover { key: String, id: String, path: PathBuf },
     /// The album list of a server was fetched for the library.
     ServerSynced { key: String, result: Result<Vec<ServerAlbum>, String> },
+    /// All songs of a server for the library, with their stream refs.
+    ServerSongs { key: String, tracks: Vec<(Track, String)> },
     /// The songs of a server album arrived.
     ServerTracks { request: u64, album: ServerAlbum, result: Result<Vec<Track>, String> },
 }
@@ -996,6 +998,7 @@ impl App {
             }
             Bg::ServerCover { key, id, path } => self.on_server_cover(key, id, path),
             Bg::ServerSynced { key, result } => self.on_server_synced(key, result),
+            Bg::ServerSongs { key, tracks } => self.on_server_songs(key, tracks),
             Bg::ServerTracks { request, album, result } => {
                 if request != self.server_request.load(Ordering::Relaxed) || !self.album_from_server {
                     return;
@@ -1231,12 +1234,36 @@ impl App {
         by_name
     }
 
-    /// The local songs for the Songs view (none when one server is chosen).
-    fn local_songs(&self) -> Vec<Track> {
-        if matches!(self.music_source, MusicSource::Server(_)) {
-            return Vec::new();
+    /// The songs for the Songs view: local ones and the saved server songs,
+    /// as chosen by the source chips and the search.
+    fn library_songs(&self) -> Vec<Track> {
+        let mut out = if matches!(self.music_source, MusicSource::Server(_)) {
+            Vec::new()
+        } else {
+            self.library.tracks(Some(&self.query)).unwrap_or_default()
+        };
+        if self.music_source == MusicSource::Phone {
+            return out;
         }
-        self.library.tracks(Some(&self.query)).unwrap_or_default()
+        let only = match &self.music_source {
+            MusicSource::Server(k) => Some(k.as_str()),
+            _ => None,
+        };
+        let configs: HashMap<String, &ServerConfig> = self.settings.servers.iter().map(|c| (server_key(c), c)).collect();
+        let q = Some(self.query.as_str()).filter(|q| !q.is_empty());
+        let saved = self.library.server_tracks(only, q).unwrap_or_default();
+        if saved.is_empty() {
+            return out;
+        }
+        for (key, mut t, stream_ref) in saved {
+            let Some(cfg) = configs.get(&key) else { continue };
+            t.stream_url = Some(servers::stream_url(cfg, &stream_ref));
+            out.push(t);
+        }
+        out.sort_by_cached_key(|t| {
+            (t.artist.to_lowercase(), t.album.to_lowercase(), t.disc_no, t.track_no, t.title.to_lowercase())
+        });
+        out
     }
 
     /// Name shown on a server album's cover in the library (none when only
@@ -1261,7 +1288,7 @@ impl App {
             entries = self.library_albums(None);
         }
         self.artists = self.library_artists();
-        self.songs = self.local_songs();
+        self.songs = self.library_songs();
         // "Your library is empty" (with the way to add music) only when the
         // chosen source has nothing at all.
         let local = self.library.track_count().unwrap_or(0);
@@ -1566,11 +1593,16 @@ impl App {
         // Also search the connected music servers; their songs are added
         // below the local ones when they arrive.
         let request = self.search_request.fetch_add(1, Ordering::SeqCst) + 1;
+        // Servers whose songs are saved are searched locally already; ask
+        // only the others (not synced yet).
         let servers: Vec<ServerConfig> = match &self.music_source {
             MusicSource::Phone => Vec::new(),
             MusicSource::All => self.settings.servers.clone(),
             MusicSource::Server(k) => self.settings.servers.iter().filter(|c| &server_key(c) == k).cloned().collect(),
-        };
+        }
+        .into_iter()
+        .filter(|c| !self.library.server_has_tracks(&server_key(c)).unwrap_or(false))
+        .collect();
         if self.query.chars().count() < 2 || servers.is_empty() {
             return;
         }
@@ -1601,8 +1633,9 @@ impl App {
         if request != self.search_request.load(Ordering::SeqCst) || tracks.is_empty() {
             return;
         }
-        self.songs = self.local_songs();
-        self.songs.extend(tracks);
+        // Saved songs are already listed; add only what is new.
+        let known: HashSet<PathBuf> = self.songs.iter().map(|t| t.path.clone()).collect();
+        self.songs.extend(tracks.into_iter().filter(|t| !known.contains(&t.path)));
         self.show_songs();
     }
 
@@ -2310,7 +2343,9 @@ impl App {
         let now = unix_now();
         for cfg in self.settings.servers.clone() {
             let key = server_key(&cfg);
-            let fresh = self.library.server_synced(&key).ok().flatten().is_some_and(|t| now - t < SERVER_SYNC_SECS);
+            // Songs came later than albums: fetch servers without them too.
+            let fresh = self.library.server_synced(&key).ok().flatten().is_some_and(|t| now - t < SERVER_SYNC_SECS)
+                && self.library.server_has_tracks(&key).unwrap_or(false);
             if (fresh && !force) || self.server_syncing.contains(&key) {
                 continue;
             }
@@ -2321,9 +2356,37 @@ impl App {
                     log(format!("servers: library sync of {} failed: {e:#}", cfg.name));
                     format!("{e:#}")
                 });
-                let _ = tx.send(Bg::ServerSynced { key, result });
+                let albums = result.as_ref().ok().cloned();
+                let _ = tx.send(Bg::ServerSynced { key: key.clone(), result });
+                // Then the songs, so they can be searched and listed offline.
+                let Some(albums) = albums else { return };
+                match servers::all_tracks(&cfg, &albums) {
+                    Ok(list) => {
+                        let tracks = list
+                            .into_iter()
+                            .filter_map(|t| {
+                                let r = servers::stream_ref(&cfg, t.stream_url.as_deref()?)?;
+                                Some((Track { stream_url: None, ..t }, r))
+                            })
+                            .collect();
+                        let _ = tx.send(Bg::ServerSongs { key, tracks });
+                    }
+                    Err(e) => log(format!("servers: song list of {} failed: {e:#}", cfg.name)),
+                }
             });
         }
+    }
+
+    fn on_server_songs(&mut self, key: String, tracks: Vec<(Track, String)>) {
+        if !self.settings.servers.iter().any(|c| server_key(c) == key) {
+            return; // removed meanwhile
+        }
+        log(format!("servers: library has {} songs from {key}", tracks.len()));
+        if let Err(e) = self.library.replace_server_tracks(&key, &tracks) {
+            log(format!("servers: could not save songs: {e:#}"));
+            return;
+        }
+        self.reload_library();
     }
 
     fn on_server_synced(&mut self, key: String, result: Result<Vec<ServerAlbum>, String>) {
