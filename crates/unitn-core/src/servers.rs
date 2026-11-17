@@ -252,14 +252,90 @@ pub fn plex_pin_token(pin: &PlexPin) -> Result<Option<String>> {
     plex::pin_token(pin)
 }
 
-/// Connects to a Plex server with the account token from the browser
-/// sign-in. With an empty `url` the user's servers are looked up on plex.tv
-/// and the first reachable one with a music library is used.
 /// Plex without signing in, for servers that let the home network in.
 pub fn plex_connect_open(url: &str) -> Result<ServerConfig> {
     plex::connect_open(&normalize_url(url, ServerKind::Plex), new_device_id())
 }
 
+/// A Plex server found on the local network.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoundPlex {
+    pub name: String,
+    /// `http://<ip>:<port>`
+    pub url: String,
+}
+
+/// Looks for Plex servers on the local network with Plex's own discovery
+/// (GDM: a UDP query to port 32414, by multicast and broadcast; servers
+/// answer with their name and port). Waits `wait` for answers.
+pub fn plex_discover(wait: Duration) -> Vec<FoundPlex> {
+    use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+    let mut found: Vec<(String, FoundPlex)> = Vec::new();
+    let Ok(sock) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) else { return Vec::new() };
+    let _ = sock.set_broadcast(true);
+    let query = b"M-SEARCH * HTTP/1.1\r\n\r\n";
+    let targets = [
+        SocketAddr::from((Ipv4Addr::new(239, 0, 0, 250), 32414)),
+        SocketAddr::from((Ipv4Addr::BROADCAST, 32414)),
+    ];
+    let start = std::time::Instant::now();
+    let mut buf = [0u8; 2048];
+    let mut sent = 0;
+    while start.elapsed() < wait {
+        // Ask again now and then: UDP packets get lost on Wi-Fi.
+        if sent < 3 && start.elapsed() >= wait / 3 * sent {
+            for t in &targets {
+                let _ = sock.send_to(query, t);
+            }
+            sent += 1;
+        }
+        let _ = sock.set_read_timeout(Some(Duration::from_millis(200)));
+        if let Ok((n, from)) = sock.recv_from(&mut buf) {
+            if let Some((id, server)) = parse_gdm(&String::from_utf8_lossy(&buf[..n]), from.ip()) {
+                if !found.iter().any(|(fid, _)| *fid == id) {
+                    crate::log::log(format!("servers: GDM found Plex '{}' at {}", server.name, server.url));
+                    found.push((id, server));
+                }
+            }
+        }
+    }
+    found.into_iter().map(|(_, s)| s).collect()
+}
+
+/// One GDM answer: `(resource id, server)`, if it is a Plex media server.
+fn parse_gdm(reply: &str, from: std::net::IpAddr) -> Option<(String, FoundPlex)> {
+    let mut lines = reply.lines();
+    if !lines.next()?.contains(" 200 ") {
+        return None;
+    }
+    let (mut kind, mut id, mut name, mut port) = (String::new(), String::new(), String::new(), String::from("32400"));
+    for line in lines {
+        let Some((k, v)) = line.split_once(':') else { continue };
+        let v = v.trim().to_string();
+        match k.trim().to_ascii_lowercase().as_str() {
+            "content-type" => kind = v,
+            "resource-identifier" => id = v,
+            "name" => name = v,
+            "port" => port = v,
+            _ => {}
+        }
+    }
+    if !kind.contains("plex/media-server") || port.parse::<u16>().is_err() {
+        return None;
+    }
+    let host = match from {
+        std::net::IpAddr::V6(ip) => format!("[{ip}]"),
+        ip => ip.to_string(),
+    };
+    let url = format!("http://{host}:{port}");
+    let id = if id.is_empty() { url.clone() } else { id };
+    let name = if name.is_empty() { "Plex".to_string() } else { name };
+    Some((id, FoundPlex { name, url }))
+}
+
+/// Connects to a Plex server with the account token from the browser
+/// sign-in. With an empty `url` the user's servers are looked up on plex.tv
+/// and the first reachable one with a music library is used.
 pub fn plex_connect_account(url: &str, account_token: &str, device_id: String) -> Result<ServerConfig> {
     let url = if url.trim().is_empty() { String::new() } else { normalize_url(url, ServerKind::Plex) };
     plex::connect_account(&url, account_token, device_id)
@@ -1111,6 +1187,18 @@ mod tests {
         let json = serde_json::json!({"MediaContainer": {"Metadata": [{"ratingKey": "7", "title": "A", "thumb": "/t/7"}]}});
         let albums = plex::parse_albums(&c, &json);
         assert!(!albums[0].image_url.as_deref().unwrap().contains("X-Plex-Token"));
+    }
+
+    #[test]
+    fn reads_gdm_answers() {
+        let ip: std::net::IpAddr = "192.168.1.5".parse().unwrap();
+        let reply = "HTTP/1.0 200 OK\r\nContent-Type: plex/media-server\r\nResource-Identifier: abc123\r\nName: NAS\r\nPort: 32400\r\nVersion: 1.40\r\n\r\n";
+        let (id, s) = parse_gdm(reply, ip).unwrap();
+        assert_eq!(id, "abc123");
+        assert_eq!(s, FoundPlex { name: "NAS".into(), url: "http://192.168.1.5:32400".into() });
+        // Plex players answer too: skip them.
+        assert!(parse_gdm("HTTP/1.0 200 OK\r\nContent-Type: plex/media-player\r\nName: TV\r\nPort: 32500\r\n", ip).is_none());
+        assert!(parse_gdm("M-SEARCH * HTTP/1.1\r\n\r\n", ip).is_none());
     }
 
     #[test]

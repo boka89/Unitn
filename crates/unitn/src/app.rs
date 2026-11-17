@@ -74,6 +74,10 @@ enum Bg {
     PlexWaiting { login: u64, code: Option<String>, opened: bool },
     /// The Plex sign-in was approved in the browser; connecting to the server.
     PlexApproved { login: u64 },
+    /// Plex servers found on the network (GDM) for the Add server dialog.
+    PlexFound { request: u64, found: Vec<servers::FoundPlex> },
+    /// Progress text for a Plex sign-in that searches the network first.
+    PlexStatus { login: u64, text: String },
     /// The album list of a server arrived.
     ServerAlbums { request: u64, key: String, result: Result<Vec<ServerAlbum>, String> },
     /// A server album cover was downloaded.
@@ -330,6 +334,9 @@ pub struct App {
     server_request: Arc<AtomicU64>,
     /// Current "Sign in with Plex" attempt; bumping it cancels the old one.
     plex_login: Arc<AtomicU64>,
+    /// Current Plex network search in the Add server dialog, and its finds.
+    plex_find: u64,
+    plex_found: Vec<servers::FoundPlex>,
     /// Current library search, so late server results can be ignored.
     search_request: Arc<AtomicU64>,
     /// Lyrics of the current song, and the song they were asked for.
@@ -462,6 +469,8 @@ impl App {
             server: ServerView::default(),
             server_request: Arc::new(AtomicU64::new(0)),
             plex_login: Arc::new(AtomicU64::new(0)),
+            plex_find: 0,
+            plex_found: Vec::new(),
             search_request: Arc::new(AtomicU64::new(0)),
             lyrics: None,
             lyrics_for: None,
@@ -946,6 +955,14 @@ impl App {
                 if login == self.plex_login.load(Ordering::SeqCst) {
                     if let Some(ui) = self.ui() {
                         ui.set_server_dialog_status("Signed in to Plex. Connecting to your server…".into());
+                    }
+                }
+            }
+            Bg::PlexFound { request, found } => self.on_plex_found(request, found),
+            Bg::PlexStatus { login, text } => {
+                if login == self.plex_login.load(Ordering::SeqCst) {
+                    if let Some(ui) = self.ui() {
+                        ui.set_server_dialog_status(text.into());
                     }
                 }
             }
@@ -1986,16 +2003,33 @@ impl App {
             let result = (|| -> anyhow::Result<Option<ServerConfig>> {
                 // With an address, first try without signing in: Plex can let
                 // the home network in without one.
-                if !url.trim().is_empty() {
-                    match servers::plex_connect_open(&url) {
+                let mut url = url;
+                let candidates = if url.trim().is_empty() {
+                    // No address: look on the local network first (GDM).
+                    let _ = tx.send(Bg::PlexStatus { login, text: "Looking for Plex servers on your network…".into() });
+                    servers::plex_discover(Duration::from_secs(3)).into_iter().map(|f| f.url).collect()
+                } else {
+                    vec![url.clone()]
+                };
+                for candidate in &candidates {
+                    if !alive() {
+                        return Ok(None);
+                    }
+                    match servers::plex_connect_open(candidate) {
                         Ok(cfg) => {
                             log("servers: Plex lets us in without signing in");
                             return Ok(Some(cfg));
                         }
-                        Err(e) => log(format!("servers: Plex without sign-in: {e:#}")),
+                        Err(e) => log(format!("servers: Plex without sign-in at {candidate}: {e:#}")),
                     }
-                    if !alive() {
-                        return Ok(None);
+                }
+                if !alive() {
+                    return Ok(None);
+                }
+                // Signing in is needed: use the server found nearby, if any.
+                if url.trim().is_empty() {
+                    if let Some(first) = candidates.first() {
+                        url = first.clone();
                     }
                 }
                 let pin = servers::plex_pin_start()?;
@@ -2063,10 +2097,54 @@ impl App {
     /// The "Add server" dialog was closed: stop waiting for a Plex sign-in.
     pub fn close_server_dialog(&mut self) {
         self.plex_login.fetch_add(1, Ordering::SeqCst);
+        self.plex_find += 1;
+        self.plex_found.clear();
         if let Some(ui) = self.ui() {
+            ui.set_plex_searching(false);
+            ui.set_plex_found(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+            ui.set_server_url_text(SharedString::new());
             ui.set_server_dialog(false);
             ui.set_server_connecting(false);
             ui.set_server_dialog_status(SharedString::new());
+        }
+    }
+
+    /// The Add server dialog switched to Plex: look for servers on the
+    /// network in the background. The address box stays usable meanwhile.
+    pub fn find_plex(&mut self) {
+        self.plex_find += 1;
+        let request = self.plex_find;
+        if let Some(ui) = self.ui() {
+            ui.set_plex_searching(true);
+        }
+        let tx = self.bg_tx.clone();
+        thread::spawn(move || {
+            let found = servers::plex_discover(Duration::from_secs(4));
+            let _ = tx.send(Bg::PlexFound { request, found });
+        });
+    }
+
+    fn on_plex_found(&mut self, request: u64, found: Vec<servers::FoundPlex>) {
+        if request != self.plex_find {
+            return;
+        }
+        let Some(ui) = self.ui() else { return };
+        ui.set_plex_searching(false);
+        let labels: Vec<SharedString> = found
+            .iter()
+            .map(|f| format!("{} · {}", f.name, f.url.trim_start_matches("http://")).into())
+            .collect();
+        ui.set_plex_found(ModelRc::new(VecModel::from(labels)));
+        // One server and nothing typed yet: fill it in.
+        if found.len() == 1 && ui.get_server_url_text().trim().is_empty() {
+            ui.set_server_url_text(found[0].url.clone().into());
+        }
+        self.plex_found = found;
+    }
+
+    pub fn pick_plex(&mut self, i: usize) {
+        if let (Some(f), Some(ui)) = (self.plex_found.get(i), self.ui()) {
+            ui.set_server_url_text(f.url.clone().into());
         }
     }
 
@@ -4161,6 +4239,8 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_remove_server, |a, i| a.remove_server(i.max(0) as usize));
     on!(on_connect_server, |a, kind, url, user, secret| a.connect_server(kind, url.to_string(), user.to_string(), secret.to_string()));
     on!(on_close_server_dialog, |a| a.close_server_dialog());
+    on!(on_find_plex, |a| a.find_plex());
+    on!(on_pick_plex, |a, i| a.pick_plex(i.max(0) as usize));
     on!(on_crossfade_changed, |a, secs| a.set_crossfade(secs));
     on!(on_gapless_albums_changed, |a, on| a.set_gapless_albums(on));
     on!(on_lyrics_online_changed, |a, on| a.set_lyrics_online(on));

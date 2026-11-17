@@ -1,6 +1,6 @@
 // Unitn main window.
 
-import { Palette, ListView } from "std-widgets.slint";
+import { Palette, ListView, Spinner } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import {
     AlbumItem, TrackItem, ArtistItem, StationItem, QueueEntry, PlaylistItem, MenuRow, FixCandidate, ServerItem, Chip,
@@ -229,6 +229,12 @@ export component AppWindow inherits Window {
     callback open-server-album(int);
     callback connect-server(int, string, string, string);
     callback close-server-dialog();
+    // Plex servers found on the network (GDM), as "Name · ip:port".
+    in property <bool> plex-searching: false;
+    in property <[string]> plex-found;
+    in-out property <string> server-url-text;
+    callback find-plex();
+    callback pick-plex(int);
     property <string> server-user-text;
     property <string> server-secret-text;
     callback remove-server(int);
@@ -1869,7 +1875,44 @@ export component AppWindow inherits Window {
                     Chip { text: "Plex"; selected: root.server-kind == 1; clicked => { root.server-kind = 1; } }
                     Chip { text: root.phone ? "Navidrome" : "Navidrome / Subsonic"; selected: root.server-kind == 2; clicked => { root.server-kind = 2; } }
                 }
+                // Plex: servers found on the network. Searching runs in the
+                // background; the address box below stays usable.
+                if root.server-kind == 1: VerticalLayout {
+                    spacing: 2px;
+                    init => { root.find-plex(); }
+                    for name[i] in root.plex-found: NavItem {
+                        icon: @image-url("icons/server.svg");
+                        label: name;
+                        clicked => { root.pick-plex(i); }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        height: 30px;
+                        if root.plex-searching: Spinner {
+                            indeterminate: true;
+                            width: 18px;
+                            height: 18px;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        Text {
+                            vertical-alignment: center;
+                            text: root.plex-searching ? "Looking for Plex servers on your network…"
+                                : root.plex-found.length == 0 ? "No Plex server found on your network."
+                                : "Tap a server, or enter an address.";
+                            color: Theme.fg-muted;
+                            font-size: 12px;
+                        }
+                        if !root.plex-searching: IconButton {
+                            icon: @image-url("icons/refresh.svg");
+                            size: 30px;
+                            icon-size: 15px;
+                            clicked => { root.find-plex(); }
+                        }
+                    }
+                }
                 server-url := TextField {
+                    text <=> root.server-url-text;
                     placeholder: root.server-kind == 0 ? "Address, e.g. 192.168.1.10 or http://nas:8096"
                         : root.server-kind == 2 ? "Address, e.g. 192.168.1.10 or http://nas:4533"
                         : "Server address (optional, found automatically)";
@@ -1894,7 +1937,7 @@ export component AppWindow inherits Window {
                             ? "Your password is only used to sign in; Unitn keeps the access token the server gives it."
                         : root.server-kind == 2
                             ? "Works with Navidrome, Gonic, Airsonic and other OpenSubsonic servers. Unitn keeps a salted token, never your password."
-                            : "You sign in on plex.tv in your browser, so two-factor sign-in works. Leave the address empty to find your server automatically.";
+                            : "Unitn connects without signing in if your Plex server allows your network. Otherwise you sign in on plex.tv in your browser (two-factor sign-in works).";
                     color: root.server-dialog-status != "" ? Theme.fg : Theme.fg-muted;
                     font-size: 12px;
                     wrap: word-wrap;
@@ -1909,7 +1952,7 @@ export component AppWindow inherits Window {
                     }
                     PillButton {
                         text: root.server-kind == 1
-                            ? (root.server-connecting ? "Waiting for Plex…" : "Sign in with Plex")
+                            ? (root.server-connecting ? "Connecting…" : "Connect")
                             : (root.server-connecting ? "Connecting…" : "Connect");
                         has-icon: false;
                         primary: true;
