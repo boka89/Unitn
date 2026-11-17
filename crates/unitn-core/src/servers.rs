@@ -117,7 +117,12 @@ fn explain(err: ureq::Error, what: &str) -> anyhow::Error {
             if msg.contains("certificate") || msg.contains("Certificate") {
                 anyhow!("{what}: the server's HTTPS certificate isn't trusted (try its http:// address)")
             } else {
-                anyhow!("{what}: can't reach the server ({})", t.kind())
+                // Name the host: Plex sign-in talks to plex.tv and to the
+                // server, and a DNS block usually hits only one of them.
+                match t.url().and_then(|u| u.host_str()) {
+                    Some(host) => anyhow!("{what}: can't reach {host} ({})", t.kind()),
+                    None => anyhow!("{what}: can't reach the server ({})", t.kind()),
+                }
             }
         }
     }
