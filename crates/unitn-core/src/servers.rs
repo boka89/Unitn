@@ -70,10 +70,35 @@ pub struct ServerAlbum {
 
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
+        .resolver(resolve)
         .user_agent(crate::USER_AGENT)
         .timeout_connect(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
         .build()
+}
+
+/// Plex's secure addresses (`1-2-3-4.<hash>.plex.direct`) carry the IP in
+/// the name. Routers and DNS filters with rebinding protection refuse to
+/// look those up (they point at a home address), and a Plex server that
+/// requires secure connections redirects plain `http://<ip>:32400` there.
+/// So read the IP from the name instead of asking DNS.
+fn plex_direct_ip(host: &str) -> Option<std::net::IpAddr> {
+    let host = host.to_ascii_lowercase();
+    if !host.ends_with(".plex.direct") {
+        return None;
+    }
+    let first = host.split('.').next()?;
+    first.replace('-', ".").parse::<std::net::Ipv4Addr>().ok().map(Into::into)
+}
+
+pub(crate) fn resolve(netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+    use std::net::ToSocketAddrs;
+    if let Some((host, port)) = netloc.rsplit_once(':') {
+        if let (Some(ip), Ok(port)) = (plex_direct_ip(host), port.parse::<u16>()) {
+            return Ok(vec![std::net::SocketAddr::new(ip, port)]);
+        }
+    }
+    netloc.to_socket_addrs().map(Iterator::collect)
 }
 
 /// Cleans up what the user typed: adds `http://`, removes trailing slashes.
@@ -1041,6 +1066,17 @@ mod tests {
         assert_eq!(t[0].stream_ext.as_deref(), Some("flac"));
         assert!(t[0].stream_url.as_deref().unwrap().starts_with("http://nas:8096/Audio/T1/stream?static=true"));
         assert_eq!(t[0].year, 2008);
+    }
+
+    #[test]
+    fn plex_direct_names_resolve_without_dns() {
+        use std::net::SocketAddr;
+        let want: SocketAddr = "192.168.1.5:32400".parse().unwrap();
+        assert_eq!(resolve("192-168-1-5.0123abcd.plex.direct:32400").unwrap(), vec![want]);
+        assert_eq!(resolve("192-168-1-5.0123ABCD.Plex.Direct:32400").unwrap(), vec![want]);
+        assert_eq!(super::plex_direct_ip("plex.direct"), None);
+        assert_eq!(super::plex_direct_ip("nas.example.com"), None);
+        assert!(resolve("127.0.0.1:80").unwrap().contains(&"127.0.0.1:80".parse().unwrap()));
     }
 
     #[test]

@@ -121,6 +121,7 @@ impl Decoder {
             }
             Source::Remote { url, ext } => {
                 let agent = ureq::AgentBuilder::new()
+                    .resolver(crate::servers::resolve) // Plex's *.plex.direct addresses
                     .user_agent(crate::USER_AGENT)
                     .timeout_connect(std::time::Duration::from_secs(10))
                     .timeout_read(std::time::Duration::from_secs(30))
