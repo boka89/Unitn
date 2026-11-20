@@ -60,8 +60,8 @@ export component AppWindow inherits Window {
     /// Space for the macOS window buttons (the title bar is drawn by us there).
     in property <length> titlebar-inset: 0px;
 
-    /// Phone-sized window: no sidebar; five tabs sit at the bottom (Music,
-    /// Radio, Podcasts, Playlists, Settings) and the player bar is compact.
+    /// Phone-sized window: no sidebar; four tabs sit at the bottom (Music,
+    /// Radio, Podcasts, Settings) and the player bar is compact.
     /// Page 11 is the phone's list of playlists, page 12 its Sources
     /// (music folders and servers).
     property <bool> phone: root.width < 720px || root.height < 520px;
@@ -118,9 +118,8 @@ export component AppWindow inherits Window {
     property <int> active-tab: root.music-chips || (root.page == 5 && !root.album-from-server-page) ? 0
         : root.page == 3 ? 1
         : root.page == 10 ? 2
-        : (root.page == 11 || root.page == 8) && !root.np-group ? 3
         : root.np-chips || root.page == 6 ? -1
-        : 4;
+        : 3;
 
     // Pages: 0 albums, 1 artists, 2 songs, 3 radio, 4 queue, 5 album detail, 6 now playing, 7 settings, 8 playlist
     in-out property <int> page: 0;
@@ -1261,58 +1260,6 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    // Phone: Music's views, at the bottom where the thumb is
-                    // (search stays at the top).
-                    if root.music-chips: HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
-                        padding-top: 8px;
-                        padding-bottom: 8px;
-                        spacing: 6px;
-                        alignment: center;
-                        Chip {
-                            text: "Song";
-                            selected: root.page == 2;
-                            clicked => {
-                                root.music-group = false;
-                                root.page = 2;
-                            }
-                        }
-                        Chip {
-                            text: "Album";
-                            selected: root.page == 0;
-                            clicked => {
-                                root.music-group = false;
-                                if (root.albums-filtered) { root.show-all-albums(); }
-                                root.page = 0;
-                            }
-                        }
-                        Chip {
-                            text: "Artist";
-                            selected: root.page == 1;
-                            clicked => {
-                                root.music-group = false;
-                                root.page = 1;
-                            }
-                        }
-                        Chip {
-                            text: "Playlist";
-                            selected: root.page == 11 || root.page == 8;
-                            clicked => {
-                                root.music-group = true;
-                                root.np-group = false;
-                                root.page = 11;
-                            }
-                        }
-                        Chip {
-                            text: "Q";
-                            selected: root.page == 4;
-                            clicked => {
-                                root.music-group = true;
-                                root.page = 4;
-                            }
-                        }
-                    }
                 }
             }
             }
@@ -1545,11 +1492,74 @@ export component AppWindow inherits Window {
                 }
             }
 
+            // Phone: Music's views, between the small player and the tabs
+            // (search and the source filter stay at the top).
+            if root.music-chips: Rectangle {
+                background: Theme.sidebar;
+                Rectangle {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: 1px;
+                    background: Theme.border;
+                }
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    spacing: 6px;
+                    alignment: center;
+                    Chip {
+                        text: "Song";
+                        selected: root.page == 2;
+                        clicked => {
+                            root.music-group = false;
+                            root.page = 2;
+                        }
+                    }
+                    Chip {
+                        text: "Album";
+                        selected: root.page == 0;
+                        clicked => {
+                            root.music-group = false;
+                            if (root.albums-filtered) { root.show-all-albums(); }
+                            root.page = 0;
+                        }
+                    }
+                    Chip {
+                        text: "Artist";
+                        selected: root.page == 1;
+                        clicked => {
+                            root.music-group = false;
+                            root.page = 1;
+                        }
+                    }
+                    Chip {
+                        text: "Q";
+                        selected: root.page == 4;
+                        clicked => {
+                            root.music-group = true;
+                            root.page = 4;
+                        }
+                    }
+                    Chip {
+                        text: "Playlist";
+                        selected: root.page == 11 || root.page == 8;
+                        clicked => {
+                            root.music-group = true;
+                            root.np-group = false;
+                            root.page = 11;
+                        }
+                    }
+                }
+            }
+
             // Phone: tabs.
             if root.phone: Rectangle {
                 height: 58px;
                 background: Theme.sidebar;
-                Rectangle {
+                if !root.music-chips: Rectangle {
                     x: 0px;
                     y: 0px;
                     width: parent.width;
@@ -1561,7 +1571,6 @@ export component AppWindow inherits Window {
                         { icon: @image-url("icons/song.svg"), label: "Music", page: 2 },
                         { icon: @image-url("icons/radio.svg"), label: "Radio", page: 3 },
                         { icon: @image-url("icons/podcast.svg"), label: "Podcasts", page: 10 },
-                        { icon: @image-url("icons/playlist.svg"), label: "Playlists", page: 11 },
                         { icon: @image-url("icons/settings.svg"), label: "Settings", page: 7 },
                     ]: Rectangle {
                         horizontal-stretch: 1;
