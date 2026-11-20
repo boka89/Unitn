@@ -70,10 +70,35 @@ pub struct ServerAlbum {
 
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
+        .resolver(resolve)
         .user_agent(crate::USER_AGENT)
         .timeout_connect(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
         .build()
+}
+
+/// Plex's secure addresses (`1-2-3-4.<hash>.plex.direct`) carry the IP in
+/// the name. Routers and DNS filters with rebinding protection refuse to
+/// look those up (they point at a home address), and a Plex server that
+/// requires secure connections redirects plain `http://<ip>:32400` there.
+/// So read the IP from the name instead of asking DNS.
+fn plex_direct_ip(host: &str) -> Option<std::net::IpAddr> {
+    let host = host.to_ascii_lowercase();
+    if !host.ends_with(".plex.direct") {
+        return None;
+    }
+    let first = host.split('.').next()?;
+    first.replace('-', ".").parse::<std::net::Ipv4Addr>().ok().map(Into::into)
+}
+
+pub(crate) fn resolve(netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+    use std::net::ToSocketAddrs;
+    if let Some((host, port)) = netloc.rsplit_once(':') {
+        if let (Some(ip), Ok(port)) = (plex_direct_ip(host), port.parse::<u16>()) {
+            return Ok(vec![std::net::SocketAddr::new(ip, port)]);
+        }
+    }
+    netloc.to_socket_addrs().map(Iterator::collect)
 }
 
 /// Cleans up what the user typed: adds `http://`, removes trailing slashes.
@@ -117,7 +142,12 @@ fn explain(err: ureq::Error, what: &str) -> anyhow::Error {
             if msg.contains("certificate") || msg.contains("Certificate") {
                 anyhow!("{what}: the server's HTTPS certificate isn't trusted (try its http:// address)")
             } else {
-                anyhow!("{what}: can't reach the server ({})", t.kind())
+                // Name the host: Plex sign-in talks to plex.tv and to the
+                // server, and a DNS block usually hits only one of them.
+                match t.url().and_then(|u| u.host_str()) {
+                    Some(host) => anyhow!("{what}: can't reach {host} ({})", t.kind()),
+                    None => anyhow!("{what}: can't reach the server ({})", t.kind()),
+                }
             }
         }
     }
@@ -160,6 +190,10 @@ pub fn search_tracks(cfg: &ServerConfig, query: &str) -> Result<Vec<Track>> {
 /// The address a server song streams from, with the current credentials.
 /// `stream_ref` is what [`stream_ref`] returned (a path without tokens).
 pub fn stream_url(cfg: &ServerConfig, stream_ref: &str) -> String {
+    if cfg.kind == ServerKind::Plex && cfg.token.is_empty() {
+        // A Plex server that lets the home network in without signing in.
+        return format!("{}{stream_ref}", cfg.url);
+    }
     let sep = if stream_ref.contains('?') { '&' } else { '?' };
     let auth = match cfg.kind {
         ServerKind::Jellyfin => format!("deviceId={}&api_key={}", cfg.device_id, cfg.token),
@@ -178,7 +212,8 @@ pub fn stream_ref(cfg: &ServerConfig, stream_url: &str) -> Option<String> {
         ServerKind::Plex => "X-Plex-Token=",
         ServerKind::Subsonic => "u=",
     };
-    let cut = ['?', '&'].iter().filter_map(|c| rest.find(&format!("{c}{marker}"))).min()?;
+    // No credentials in the address (Plex without sign-in): keep all of it.
+    let cut = ['?', '&'].iter().filter_map(|c| rest.find(&format!("{c}{marker}"))).min().unwrap_or(rest.len());
     Some(rest[..cut].to_string())
 }
 
@@ -217,6 +252,87 @@ pub fn plex_pin_token(pin: &PlexPin) -> Result<Option<String>> {
     plex::pin_token(pin)
 }
 
+/// Plex without signing in, for servers that let the home network in.
+pub fn plex_connect_open(url: &str) -> Result<ServerConfig> {
+    plex::connect_open(&normalize_url(url, ServerKind::Plex), new_device_id())
+}
+
+/// A Plex server found on the local network.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FoundPlex {
+    pub name: String,
+    /// `http://<ip>:<port>`
+    pub url: String,
+}
+
+/// Looks for Plex servers on the local network with Plex's own discovery
+/// (GDM: a UDP query to port 32414, by multicast and broadcast; servers
+/// answer with their name and port). Waits `wait` for answers.
+pub fn plex_discover(wait: Duration) -> Vec<FoundPlex> {
+    use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+    let mut found: Vec<(String, FoundPlex)> = Vec::new();
+    let Ok(sock) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) else { return Vec::new() };
+    let _ = sock.set_broadcast(true);
+    let query = b"M-SEARCH * HTTP/1.1\r\n\r\n";
+    let targets = [
+        SocketAddr::from((Ipv4Addr::new(239, 0, 0, 250), 32414)),
+        SocketAddr::from((Ipv4Addr::BROADCAST, 32414)),
+    ];
+    let start = std::time::Instant::now();
+    let mut buf = [0u8; 2048];
+    let mut sent = 0;
+    while start.elapsed() < wait {
+        // Ask again now and then: UDP packets get lost on Wi-Fi.
+        if sent < 3 && start.elapsed() >= wait / 3 * sent {
+            for t in &targets {
+                let _ = sock.send_to(query, t);
+            }
+            sent += 1;
+        }
+        let _ = sock.set_read_timeout(Some(Duration::from_millis(200)));
+        if let Ok((n, from)) = sock.recv_from(&mut buf) {
+            if let Some((id, server)) = parse_gdm(&String::from_utf8_lossy(&buf[..n]), from.ip()) {
+                if !found.iter().any(|(fid, _)| *fid == id) {
+                    crate::log::log(format!("servers: GDM found Plex '{}' at {}", server.name, server.url));
+                    found.push((id, server));
+                }
+            }
+        }
+    }
+    found.into_iter().map(|(_, s)| s).collect()
+}
+
+/// One GDM answer: `(resource id, server)`, if it is a Plex media server.
+fn parse_gdm(reply: &str, from: std::net::IpAddr) -> Option<(String, FoundPlex)> {
+    let mut lines = reply.lines();
+    if !lines.next()?.contains(" 200 ") {
+        return None;
+    }
+    let (mut kind, mut id, mut name, mut port) = (String::new(), String::new(), String::new(), String::from("32400"));
+    for line in lines {
+        let Some((k, v)) = line.split_once(':') else { continue };
+        let v = v.trim().to_string();
+        match k.trim().to_ascii_lowercase().as_str() {
+            "content-type" => kind = v,
+            "resource-identifier" => id = v,
+            "name" => name = v,
+            "port" => port = v,
+            _ => {}
+        }
+    }
+    if !kind.contains("plex/media-server") || port.parse::<u16>().is_err() {
+        return None;
+    }
+    let host = match from {
+        std::net::IpAddr::V6(ip) => format!("[{ip}]"),
+        ip => ip.to_string(),
+    };
+    let url = format!("http://{host}:{port}");
+    let id = if id.is_empty() { url.clone() } else { id };
+    let name = if name.is_empty() { "Plex".to_string() } else { name };
+    Some((id, FoundPlex { name, url }))
+}
+
 /// Connects to a Plex server with the account token from the browser
 /// sign-in. With an empty `url` the user's servers are looked up on plex.tv
 /// and the first reachable one with a music library is used.
@@ -235,6 +351,27 @@ pub fn albums(cfg: &ServerConfig) -> Result<Vec<ServerAlbum>> {
     list.sort_by_cached_key(|a| (a.artist.to_lowercase(), a.title.to_lowercase()));
     Ok(list)
 }
+
+/// Every song on the server, for the library index. Fetched in pages.
+/// Servers that can't list all songs at once are asked album by album.
+pub fn all_tracks(cfg: &ServerConfig, albums: &[ServerAlbum]) -> Result<Vec<Track>> {
+    let tracks = match cfg.kind {
+        ServerKind::Jellyfin => jellyfin::all_tracks(cfg)?,
+        ServerKind::Plex => plex::all_tracks(cfg)?,
+        ServerKind::Subsonic => subsonic::all_tracks(cfg)?,
+    };
+    if !tracks.is_empty() || albums.is_empty() {
+        return Ok(tracks);
+    }
+    let mut tracks = Vec::new();
+    for album in albums {
+        tracks.extend(album_tracks(cfg, album)?);
+    }
+    Ok(tracks)
+}
+
+/// Songs per request when listing a whole library.
+const PAGE: usize = 2000;
 
 /// The songs of an album, in disc and track order, ready to play.
 pub fn album_tracks(cfg: &ServerConfig, album: &ServerAlbum) -> Result<Vec<Track>> {
@@ -394,6 +531,31 @@ mod jellyfin {
         Ok(parse_tracks(cfg, Some(album), &json))
     }
 
+    pub fn all_tracks(cfg: &ServerConfig) -> Result<Vec<Track>> {
+        let mut out = Vec::new();
+        loop {
+            let start = out.len().to_string();
+            let json = get(
+                cfg,
+                "/Items",
+                &[
+                    ("userId", &cfg.user_id),
+                    ("IncludeItemTypes", "Audio"),
+                    ("Recursive", "true"),
+                    ("StartIndex", &start),
+                    ("Limit", &PAGE.to_string()),
+                    ("Fields", "ProductionYear,Container"),
+                ],
+            )?;
+            let page = parse_tracks(cfg, None, &json);
+            let n = page.len();
+            out.extend(page);
+            if n < PAGE {
+                return Ok(out);
+            }
+        }
+    }
+
     pub fn search(cfg: &ServerConfig, query: &str) -> Result<Vec<Track>> {
         let json = get(
             cfg,
@@ -465,9 +627,11 @@ mod plex {
         let mut req = agent()
             .get(&format!("{}{path}", cfg.url))
             .set("Accept", "application/json")
-            .set("X-Plex-Token", &cfg.token)
             .set("X-Plex-Client-Identifier", &cfg.device_id)
             .set("X-Plex-Product", PRODUCT);
+        if !cfg.token.is_empty() {
+            req = req.set("X-Plex-Token", &cfg.token);
+        }
         for (k, v) in query {
             req = req.query(k, v);
         }
@@ -500,6 +664,13 @@ mod plex {
             token
         };
         finish(url, user, token, device_id)
+    }
+
+    /// Plex can let chosen networks in without signing in ("List of IP
+    /// addresses and networks that are allowed without auth"). Try that
+    /// first; fails if the server wants a sign-in.
+    pub fn connect_open(url: &str, device_id: String) -> Result<ServerConfig> {
+        finish(url, "", String::new(), device_id)
     }
 
     fn plex_tv(method: &str, path: &str, device_id: &str) -> ureq::Request {
@@ -741,12 +912,15 @@ mod plex {
             .filter_map(|it| {
                 let id = it["ratingKey"].as_str()?.to_string();
                 let image_url = it["thumb"].as_str().map(|thumb| {
-                    format!(
-                        "{}/photo/:/transcode?width=400&height=400&minSize=1&upscale=1&url={}&X-Plex-Token={}",
+                    let mut url = format!(
+                        "{}/photo/:/transcode?width=400&height=400&minSize=1&upscale=1&url={}",
                         cfg.url,
-                        percent_encode(thumb),
-                        cfg.token
-                    )
+                        percent_encode(thumb)
+                    );
+                    if !cfg.token.is_empty() {
+                        url.push_str(&format!("&X-Plex-Token={}", cfg.token));
+                    }
+                    url
                 });
                 Some(ServerAlbum {
                     title: it["title"].as_str().filter(|n| !n.is_empty()).unwrap_or("Unknown Album").to_string(),
@@ -762,6 +936,32 @@ mod plex {
     pub fn album_tracks(cfg: &ServerConfig, album: &ServerAlbum) -> Result<Vec<Track>> {
         let json = get(cfg, &format!("/library/metadata/{}/children", album.id), &[])?;
         Ok(parse_tracks(cfg, Some(album), &json["MediaContainer"]["Metadata"]))
+    }
+
+    pub fn all_tracks(cfg: &ServerConfig) -> Result<Vec<Track>> {
+        let mut out = Vec::new();
+        for section in music_sections(cfg)? {
+            let mut start = 0usize;
+            loop {
+                let json = get(
+                    cfg,
+                    &format!("/library/sections/{section}/all"),
+                    &[
+                        ("type", "10"),
+                        ("X-Plex-Container-Start", &start.to_string()),
+                        ("X-Plex-Container-Size", &PAGE.to_string()),
+                    ],
+                )?;
+                let page = parse_tracks(cfg, None, &json["MediaContainer"]["Metadata"]);
+                let n = page.len();
+                out.extend(page);
+                start += PAGE;
+                if n < PAGE {
+                    break;
+                }
+            }
+        }
+        Ok(out)
     }
 
     pub fn search(cfg: &ServerConfig, query: &str) -> Result<Vec<Track>> {
@@ -933,6 +1133,32 @@ mod subsonic {
         Ok(parse_songs(cfg, Some(album), &json["album"]["song"]))
     }
 
+    /// OpenSubsonic servers list every song for an empty search; older
+    /// ones find nothing (then the caller goes album by album).
+    pub fn all_tracks(cfg: &ServerConfig) -> Result<Vec<Track>> {
+        const SONGS: usize = 500;
+        let mut out = Vec::new();
+        loop {
+            let offset = out.len().to_string();
+            let json = get(
+                cfg,
+                "search3",
+                &[("query", ""), ("songCount", &SONGS.to_string()), ("songOffset", &offset), ("albumCount", "0"), ("artistCount", "0")],
+            )?;
+            let page = parse_songs(cfg, None, &json["searchResult3"]["song"]);
+            let n = page.len();
+            // A server that ignores the offset sends the same page again.
+            let repeated = n > 0 && out.iter().any(|t: &Track| t.path == page[0].path);
+            if repeated {
+                return Ok(out);
+            }
+            out.extend(page);
+            if n < SONGS || out.len() > 500_000 {
+                return Ok(out);
+            }
+        }
+    }
+
     pub fn search(cfg: &ServerConfig, query: &str) -> Result<Vec<Track>> {
         let json = get(cfg, "search3", &[("query", query), ("songCount", "50"), ("albumCount", "0"), ("artistCount", "0")])?;
         Ok(parse_songs(cfg, None, &json["searchResult3"]["song"]))
@@ -1036,6 +1262,41 @@ mod tests {
         assert_eq!(t[0].stream_ext.as_deref(), Some("flac"));
         assert!(t[0].stream_url.as_deref().unwrap().starts_with("http://nas:8096/Audio/T1/stream?static=true"));
         assert_eq!(t[0].year, 2008);
+    }
+
+    #[test]
+    fn plex_direct_names_resolve_without_dns() {
+        use std::net::SocketAddr;
+        let want: SocketAddr = "192.168.1.5:32400".parse().unwrap();
+        assert_eq!(resolve("192-168-1-5.0123abcd.plex.direct:32400").unwrap(), vec![want]);
+        assert_eq!(resolve("192-168-1-5.0123ABCD.Plex.Direct:32400").unwrap(), vec![want]);
+        assert_eq!(super::plex_direct_ip("plex.direct"), None);
+        assert_eq!(super::plex_direct_ip("nas.example.com"), None);
+        assert!(resolve("127.0.0.1:80").unwrap().contains(&"127.0.0.1:80".parse().unwrap()));
+    }
+
+    #[test]
+    fn plex_without_sign_in_sends_no_token() {
+        let mut c = cfg(ServerKind::Plex);
+        c.token.clear();
+        let url = stream_url(&c, "/library/parts/5/123/file.flac");
+        assert_eq!(url, format!("{}/library/parts/5/123/file.flac", c.url));
+        assert_eq!(stream_ref(&c, &url).as_deref(), Some("/library/parts/5/123/file.flac"));
+        let json = serde_json::json!({"MediaContainer": {"Metadata": [{"ratingKey": "7", "title": "A", "thumb": "/t/7"}]}});
+        let albums = plex::parse_albums(&c, &json);
+        assert!(!albums[0].image_url.as_deref().unwrap().contains("X-Plex-Token"));
+    }
+
+    #[test]
+    fn reads_gdm_answers() {
+        let ip: std::net::IpAddr = "192.168.1.5".parse().unwrap();
+        let reply = "HTTP/1.0 200 OK\r\nContent-Type: plex/media-server\r\nResource-Identifier: abc123\r\nName: NAS\r\nPort: 32400\r\nVersion: 1.40\r\n\r\n";
+        let (id, s) = parse_gdm(reply, ip).unwrap();
+        assert_eq!(id, "abc123");
+        assert_eq!(s, FoundPlex { name: "NAS".into(), url: "http://192.168.1.5:32400".into() });
+        // Plex players answer too: skip them.
+        assert!(parse_gdm("HTTP/1.0 200 OK\r\nContent-Type: plex/media-player\r\nName: TV\r\nPort: 32500\r\n", ip).is_none());
+        assert!(parse_gdm("M-SEARCH * HTTP/1.1\r\n\r\n", ip).is_none());
     }
 
     #[test]
