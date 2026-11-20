@@ -3669,8 +3669,14 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_clear_queue, |a| a.clear_queue());
     on!(on_move_queue_index, |a, from, to| a.move_queue_item(from.max(0) as usize, to.max(0) as usize));
     on!(on_toggle_play, |a| a.toggle_play());
-    on!(on_next, |a| a.next(false));
-    on!(on_previous, |a| a.previous());
+    on!(on_next, |a| {
+        log("player: next song (asked)");
+        a.next(false)
+    });
+    on!(on_previous, |a| {
+        log("player: previous song (asked)");
+        a.previous()
+    });
     on!(on_seek, |a, f| a.seek_fraction(f));
     on!(on_seek_relative, |a, d| a.seek_relative(d as f64));
     on!(on_volume_changed, |a, v| a.set_volume(v));

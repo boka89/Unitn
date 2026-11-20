@@ -61,10 +61,13 @@ adb shell pm grant $APP android.permission.POST_NOTIFICATIONS
 # Positions (screen pixels, 1080x2400 at 420 dpi): the five tabs (Music,
 # Radio, Podcasts, Playlists, Settings) are at x = 108, 324, 540, 756, 972
 # on y = 2200; the small player is at y = 2040 (cover x 95: play/stop; the
-# rest: tap Now Playing, hold Queue), its Next button at x 980.
-# The header chips (Music: Song, Album, Artist; Now Playing: Player, Queue,
-# Playlists) are on y = 249.
+# rest: tap or swipe up Now Playing, hold Queue, swipe left/right next/
+# previous song), its Next button at x 980.
+# Music's chips (Song, Album, Artist, Playlist, Q) sit above the small player
+# on y = 1892, at x = 186, 373, 562, 756, 921. Now Playing's chips (Player,
+# Queue, Playlists, Sources) are on y = 249.
 TAB_Y=2200
+CHIP_Y=1892
 savelog() { applog > "$OUT/logcat-$1.txt"; }
 
 # --- 1. local songs, then into the background -------------------------------
@@ -109,29 +112,44 @@ if wait_for "ui: event State(Playing)" "$((paused + 1))" 10; then ok "media butt
 
 # --- 2. back in the app: the other pages ------------------------------------
 start_app; sleep 3
-tap 108 $TAB_Y 3; tap 302 249 3; shot phone-albums            # Music -> Album chip
-tap 270 596 3; shot phone-album                               # -> first album
-tap 108 $TAB_Y 3; tap 110 249 3; shot phone-songs             # Music -> Song chip
-tap 1006 397 2; shot phone-song-menu; tap 300 1500 1          # "…" menu, closed by a tap outside
+tap 108 $TAB_Y 3; tap 373 $CHIP_Y 3; shot phone-albums            # Music -> Album chip
+tap 270 481 3; shot phone-album                               # -> first album
+tap 108 $TAB_Y 3; tap 186 $CHIP_Y 3; shot phone-songs             # Music -> Song chip
+tap 1006 282 2; shot phone-song-menu; tap 300 1500 1          # "…" menu, closed by a tap outside
 tap 979 134 3; shot phone-search; tap 1010 134 2              # search box, close it
 # Songs: long press picks a song (the "Add to Playlist…" bar appears above
 # the list and moves the rows down), Back lets it go again. Then swipes:
 # right = play next, left = end of the queue, each with a short bubble.
-adb shell input swipe 500 538 500 538 900; sleep 1; shot phone-songs-picked
+adb shell input swipe 500 423 500 423 900; sleep 1; shot phone-songs-picked
 check "long press picks a song" logged "songs: 1 picked"
-tap 733 375 2; shot phone-songs-add-to-playlist; tap 300 1900 1
+tap 733 260 2; shot phone-songs-add-to-playlist; tap 300 1900 1
 adb shell input keyevent KEYCODE_BACK; sleep 1
-adb shell input swipe 150 397 850 397 250; sleep 0.3; shot phone-songs-swiped-right
+adb shell input swipe 150 282 850 282 250; sleep 0.3; shot phone-songs-swiped-right
 check "swipe right plays next" logged "songs: swiped right"
 sleep 2
 # Halfway through a left swipe (finger still down): the label behind the row.
-adb shell input motionevent DOWN 850 680; adb shell input motionevent MOVE 700 680
-adb shell input motionevent MOVE 500 680; sleep 0.5; shot phone-songs-swiping-left
-adb shell input motionevent MOVE 900 680; adb shell input motionevent UP 900 680; sleep 1
-adb shell input swipe 850 538 150 538 250; sleep 0.3; shot phone-songs-swiped-left
+adb shell input motionevent DOWN 850 565; adb shell input motionevent MOVE 700 565
+adb shell input motionevent MOVE 500 565; sleep 0.5; shot phone-songs-swiping-left
+adb shell input motionevent MOVE 900 565; adb shell input motionevent UP 900 565; sleep 1
+adb shell input swipe 850 423 150 423 250; sleep 0.3; shot phone-songs-swiped-left
 check "swipe left adds to the end" logged "songs: swiped left"
 sleep 1
-tap 496 249 3; shot phone-artists                             # Artist chip
+tap 562 $CHIP_Y 3; shot phone-artists                         # Artist chip
+tap 756 $CHIP_Y 3; shot phone-music-playlists                 # Playlist chip
+tap 921 $CHIP_Y 3; shot phone-music-queue                     # Q chip
+# The small player: swipe left = next song, right = previous, up = Now Playing.
+adb logcat -c
+adb shell input swipe 800 2040 250 2040 250; sleep 2
+check "small player: swipe left = next" logged "player: next song (asked)"
+adb shell input swipe 250 2040 800 2040 250; sleep 2
+check "small player: swipe right = previous" logged "player: previous song (asked)"
+adb shell input swipe 540 2040 540 1700 250; sleep 3; shot phone-np-swiped-up
+# Now Playing: swipe left on the visualizer = next, down = back to the Queue.
+adb logcat -c
+adb shell input swipe 900 1300 200 1300 250; sleep 2
+check "Now Playing: swipe left = next" logged "player: next song (asked)"
+adb shell input swipe 540 900 540 1600 250; sleep 3; shot phone-np-swiped-down
+tap 186 $CHIP_Y 3                                             # back to Song
 tap 324 $TAB_Y 8; shot phone-radio                            # Radio
 tap 584 252 1; tap 775 252 1; tap 938 252 8                  # filters: Hungary + Pop + Rock at once
 shot phone-radio-filters

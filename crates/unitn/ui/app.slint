@@ -84,9 +84,20 @@ export component AppWindow inherits Window {
         if (root.page != 0 && root.page != 1 && root.page != 2 && root.page != 3 && root.page != 9 && root.page != 10) {
             root.search-open = false;
         }
-        if (root.page == 0 || root.page == 1 || root.page == 2 || (root.page == 12 && root.sources-in-music)) { root.music-page = root.page; }
+        if (root.page != 4 && root.page != 11 && root.page != 8) { root.music-group = false; }
+        if (root.page == 0 || root.page == 1 || root.page == 2 || (root.music-group && (root.page == 4 || root.page == 11))) { root.music-page = root.page; }
         if (root.page != 11 && root.page != 8) { root.np-group = false; }
+        if (root.page != 6) {
+            root.before-player = root.page;
+            root.before-player-music = root.music-group;
+        }
     }
+    /// Phone: the Queue or the playlists were opened from Music's chips, so
+    /// they show the Music chips.
+    property <bool> music-group: false;
+    /// Phone: the page shown before Now Playing (a swipe down goes back to it).
+    property <int> before-player: 2;
+    property <bool> before-player-music: false;
     /// Phone: the search box is shown instead of the page title.
     property <bool> search-open: false;
     /// Phone: the Music view last shown (0 albums, 1 artists, 2 songs);
@@ -95,14 +106,12 @@ export component AppWindow inherits Window {
     /// Phone: the playlists (page 11) were opened from Now Playing's
     /// "Playlists" chip, so they show the Now Playing chips.
     property <bool> np-group: false;
-    /// Phone: Music, Album or Artist view, with the Song / Album / Artist chips.
-    property <bool> music-chips: root.phone && (root.page == 0 || root.page == 1 || root.page == 2 || (root.page == 12 && root.sources-in-music));
-    /// Phone: Sources (page 12) is shown inside Music (its Sources chip),
-    /// not inside Now Playing.
-    property <bool> sources-in-music: false;
+    /// Phone: Music's Song, Album, Artist, Playlist and Queue views, with their
+    /// chips (at the bottom, above the player bar).
+    property <bool> music-chips: root.phone && (root.page == 0 || root.page == 1 || root.page == 2 || (root.music-group && (root.page == 4 || root.page == 11 || root.page == 8)));
     /// Phone: Now Playing, Queue, Playlists (also from the Playlists tab) or
     /// Sources, with the Player / Queue / Playlists / Sources chips.
-    property <bool> np-chips: root.phone && (root.page == 6 || root.page == 4 || (root.page == 12 && !root.sources-in-music) || root.page == 11 || root.page == 8);
+    property <bool> np-chips: root.phone && !root.music-chips && (root.page == 6 || root.page == 4 || root.page == 12 || root.page == 11 || root.page == 8);
     /// Phone: a server's albums (page 9) were opened from Sources, not Settings.
     property <bool> server-from-sources: false;
     /// Phone: which bottom tab is lit (-1: none).
@@ -382,7 +391,7 @@ export component AppWindow inherits Window {
         // Phone: Music is the first screen; Queue and the Now Playing
         // playlists go back to the player, a playlist to the playlists,
         // a server to Settings, everything else to Music.
-        if (root.music-chips) { return false; }
+        if (root.music-chips && root.page != 8) { return false; }
         if (root.page == 4 || (root.page == 11 && root.np-group)) {
             root.page = 6;
         } else if (root.page == 8) {
@@ -694,9 +703,9 @@ export component AppWindow inherits Window {
                             text: root.phone && root.page == 0 && !root.albums-filtered ? "Music"
                                 : root.page == 0 ? root.albums-title
                                 : root.phone && (root.page == 1 || root.page == 2) ? "Music"
+                                : root.music-chips && root.page != 8 ? "Music"
                                 // Phone: the title follows the selected chip.
                                 : root.phone && root.page == 11 ? "Playlists"
-                                : root.phone && root.page == 12 && root.sources-in-music ? "Music"
                                 : root.phone && root.page == 12 ? "Sources"
                                 : root.page == 11 ? "Playlists"
                                 : root.page == 1 ? "Artists"
@@ -787,32 +796,6 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    // Phone: Music views, like the Radio filter chips.
-                    if root.music-chips: HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        padding-bottom: 12px;
-                        spacing: 8px;
-                        alignment: start;
-                        Chip { text: "Song"; selected: root.page == 2; clicked => { root.page = 2; } }
-                        Chip {
-                            text: "Album";
-                            selected: root.page == 0;
-                            clicked => {
-                                if (root.albums-filtered) { root.show-all-albums(); }
-                                root.page = 0;
-                            }
-                        }
-                        Chip { text: "Artist"; selected: root.page == 1; clicked => { root.page = 1; } }
-                        Chip {
-                            text: "Sources";
-                            selected: root.page == 12;
-                            clicked => {
-                                root.sources-in-music = true;
-                                root.page = 12;
-                            }
-                        }
-                    }
                     // Phone: the Now Playing screens.
                     if root.np-chips: HorizontalLayout {
                         padding-left: 12px;
@@ -834,7 +817,6 @@ export component AppWindow inherits Window {
                             text: "Sources";
                             selected: root.page == 12;
                             clicked => {
-                                root.sources-in-music = false;
                                 root.page = 12;
                             }
                         }
@@ -1089,49 +1071,70 @@ export component AppWindow inherits Window {
                             toggle-favorite(i) => { root.podcast-toggle-favorite(i); }
                             toggle-show-favorite => { root.podcast-toggle-show-favorite(); }
                         }
-                        if root.page == 6: NowPlayingPage {
+                        // Phone: swipe left / right for the next / previous song,
+                        // up for the lyrics, down to close the player.
+                        if root.page == 6: np-swipe := SwipeGestureHandler {
                             width: parent.width;
                             height: parent.height;
-                            title: root.np-title;
-                            subtitle: root.np-subtitle;
-                            cover: root.np-cover;
-                            has-cover: root.np-has-cover;
-                            backdrop: root.np-backdrop;
-                            has-backdrop: root.np-has-backdrop;
-                            is-radio: root.is-radio;
-                            has-track: root.has-track;
-                            playing: root.playing;
-                            bars: root.viz-bars;
-                            peaks: root.viz-peaks;
-                            viz-style: root.viz-style;
-                            path-a: root.viz-path-a;
-                            path-b: root.viz-path-b;
-                            covered: root.viz-fullscreen;
-                            open-fullscreen => { root.viz-fullscreen = true; }
-                            step-viz(d) => { root.step-viz(d); }
-                            eq-open: root.eq-open;
-                            eq-enabled: root.eq-enabled;
-                            eq-gains: root.eq-gains;
-                            eq-preamp: root.eq-preamp;
-                            eq-preset: root.eq-preset;
-                            eq-curve: root.eq-curve;
-                            eq-open-changed(o) => { root.eq-open-changed(o); }
-                            eq-toggle(on) => { root.eq-toggle(on); }
-                            eq-preset-selected(i) => { root.eq-preset-selected(i); }
-                            eq-band-changed(i, v) => { root.eq-band-changed(i, v); }
-                            eq-preamp-changed(v) => { root.eq-preamp-changed(v); }
-                            eq-reset => { root.eq-reset(); }
-                            eq-curve-aspect(a) => { root.eq-curve-aspect(a); }
-                            can-like: root.np-can-like;
-                            liked: root.np-liked;
-                            toggle-like => { root.toggle-like(); }
-                            lyrics-open: root.lyrics-open;
-                            lyrics-lines: root.lyrics-lines;
-                            lyrics-current: root.lyrics-current;
-                            lyrics-synced: root.lyrics-synced;
-                            lyrics-status: root.lyrics-status;
-                            lyrics-source: root.lyrics-source;
-                            lyrics-open-changed(o) => { root.lyrics-open-changed(o); }
+                            enabled: root.phone && !root.eq-open;
+                            handle-swipe-left: root.has-track;
+                            handle-swipe-right: root.has-track;
+                            handle-swipe-up: !root.lyrics-open && !root.is-radio && root.has-track;
+                            handle-swipe-down: !root.lyrics-open;
+                            swiped => {
+                                if (Math.abs(self.current-position.x - self.pressed-position.x) > Math.abs(self.current-position.y - self.pressed-position.y)) {
+                                    if (self.current-position.x < self.pressed-position.x) { root.next(); } else { root.previous(); }
+                                } else if (self.current-position.y < self.pressed-position.y) {
+                                    root.lyrics-open-changed(true);
+                                } else {
+                                    root.music-group = root.before-player-music;
+                                    root.page = root.before-player;
+                                }
+                            }
+                            NowPlayingPage {
+                                width: parent.width;
+                                height: parent.height;
+                                title: root.np-title;
+                                subtitle: root.np-subtitle;
+                                cover: root.np-cover;
+                                has-cover: root.np-has-cover;
+                                backdrop: root.np-backdrop;
+                                has-backdrop: root.np-has-backdrop;
+                                is-radio: root.is-radio;
+                                has-track: root.has-track;
+                                playing: root.playing;
+                                bars: root.viz-bars;
+                                peaks: root.viz-peaks;
+                                viz-style: root.viz-style;
+                                path-a: root.viz-path-a;
+                                path-b: root.viz-path-b;
+                                covered: root.viz-fullscreen;
+                                open-fullscreen => { root.viz-fullscreen = true; }
+                                step-viz(d) => { root.step-viz(d); }
+                                eq-open: root.eq-open;
+                                eq-enabled: root.eq-enabled;
+                                eq-gains: root.eq-gains;
+                                eq-preamp: root.eq-preamp;
+                                eq-preset: root.eq-preset;
+                                eq-curve: root.eq-curve;
+                                eq-open-changed(o) => { root.eq-open-changed(o); }
+                                eq-toggle(on) => { root.eq-toggle(on); }
+                                eq-preset-selected(i) => { root.eq-preset-selected(i); }
+                                eq-band-changed(i, v) => { root.eq-band-changed(i, v); }
+                                eq-preamp-changed(v) => { root.eq-preamp-changed(v); }
+                                eq-reset => { root.eq-reset(); }
+                                eq-curve-aspect(a) => { root.eq-curve-aspect(a); }
+                                can-like: root.np-can-like;
+                                liked: root.np-liked;
+                                toggle-like => { root.toggle-like(); }
+                                lyrics-open: root.lyrics-open;
+                                lyrics-lines: root.lyrics-lines;
+                                lyrics-current: root.lyrics-current;
+                                lyrics-synced: root.lyrics-synced;
+                                lyrics-status: root.lyrics-status;
+                                lyrics-source: root.lyrics-source;
+                                lyrics-open-changed(o) => { root.lyrics-open-changed(o); }
+                            }
                         }
                         if root.page == 8: PlaylistPage {
                         width: parent.width;
@@ -1208,6 +1211,59 @@ export component AppWindow inherits Window {
                             clear => { root.clear-queue(); }
                         save-as-playlist => { root.save-queue-as-playlist(); }
                         move-index(from, to) => { root.move-queue-index(from, to); }
+                        }
+                    }
+
+                    // Phone: Music's views, at the bottom where the thumb is
+                    // (search stays at the top).
+                    if root.music-chips: HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-top: 8px;
+                        padding-bottom: 8px;
+                        spacing: 6px;
+                        alignment: center;
+                        Chip {
+                            text: "Song";
+                            selected: root.page == 2;
+                            clicked => {
+                                root.music-group = false;
+                                root.page = 2;
+                            }
+                        }
+                        Chip {
+                            text: "Album";
+                            selected: root.page == 0;
+                            clicked => {
+                                root.music-group = false;
+                                if (root.albums-filtered) { root.show-all-albums(); }
+                                root.page = 0;
+                            }
+                        }
+                        Chip {
+                            text: "Artist";
+                            selected: root.page == 1;
+                            clicked => {
+                                root.music-group = false;
+                                root.page = 1;
+                            }
+                        }
+                        Chip {
+                            text: "Playlist";
+                            selected: root.page == 11 || root.page == 8;
+                            clicked => {
+                                root.music-group = true;
+                                root.np-group = false;
+                                root.page = 11;
+                            }
+                        }
+                        Chip {
+                            text: "Q";
+                            selected: root.page == 4;
+                            clicked => {
+                                root.music-group = true;
+                                root.page = 4;
+                            }
                         }
                     }
                 }
@@ -1311,8 +1367,9 @@ export component AppWindow inherits Window {
             }
 
             // Phone, on every other page: a small player. A tap on the cover
-            // plays or stops; a tap on the rest opens Now Playing, holding it
-            // (or swiping up) the Queue. The button on the right skips to the
+            // plays or stops; a tap on the rest (or a swipe up) opens Now
+            // Playing, holding it the Queue. Swipe left: next song, swipe
+            // right: previous song. The button on the right skips to the
             // next song.
             if root.phone && root.page != 6: Rectangle {
                 property <bool> band-holding: false;
@@ -1325,6 +1382,7 @@ export component AppWindow inherits Window {
                     triggered => {
                         parent.band-holding = false;
                         parent.band-held = true;
+                        root.music-group = false;
                         root.page = 4;
                     }
                 }
@@ -1342,11 +1400,17 @@ export component AppWindow inherits Window {
                     moved => {
                         if (!self.pressed || parent.band-held) { return; }
                         if (Math.abs((self.mouse-x - self.pressed-x) / 1px) > 10) { parent.band-holding = false; }
-                        // Swipe up: the Queue.
+                        // Swipe up: Now Playing.
                         if (self.pressed-y - self.mouse-y > 24px) {
                             parent.band-holding = false;
                             parent.band-held = true;
-                            root.page = 4;
+                            root.page = 6;
+                        }
+                        // Swipe left / right: next / previous song.
+                        if (root.has-track && Math.abs(self.mouse-x - self.pressed-x) > 56px) {
+                            parent.band-holding = false;
+                            parent.band-held = true;
+                            if (self.mouse-x < self.pressed-x) { root.next(); } else { root.previous(); }
                         }
                     }
                     clicked => {
@@ -1482,11 +1546,16 @@ export component AppWindow inherits Window {
                                     if (root.active-tab == 0 && root.page == 0 && root.albums-filtered) {
                                         root.show-all-albums();
                                     }
-                                    root.sources-in-music = true;
-                                    root.page = root.page == 5 && !root.album-from-server ? 0 : root.music-page;
+                                    if (root.page == 5 && !root.album-from-server) {
+                                        root.page = 0;
+                                    } else {
+                                        root.music-group = root.music-page == 4 || root.music-page == 11;
+                                        root.page = root.music-page;
+                                    }
                                     return;
                                 }
                                 root.np-group = false;
+                                root.music-group = false;
                                 root.page = tab.page;
                             }
                         }
