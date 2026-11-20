@@ -1,0 +1,29 @@
+--------- beginning of main
+11-20 14:19:00.268  3085  3104 I unitn   : [   0.000] Unitn 0.6.2 on android x86_64
+11-20 14:19:00.269  3085  3104 I unitn   : [   0.001] startup: creating window
+11-20 14:19:00.271  3085  3104 I unitn   : [   0.003] startup: window shown
+11-20 14:19:00.273  3085  3104 I unitn   : [   0.005] startup: ready
+11-20 14:19:00.797  3085  3104 I unitn   : [   0.529] ui: autoplay https://oxygenmusic.hu:8443/oxygenmusic
+11-20 14:19:00.798  3085  3105 I unitn   : [   0.530] audio: load Url("https://oxygenmusic.hu:8443/oxygenmusic")
+11-20 14:19:00.800  3085  3117 I unitn   : [   0.531] art: looking up 1 albums online
+11-20 14:19:00.852  3085  3105 I unitn   : [   0.583] audio: output device "default", F32, 2 ch, 44100 Hz
+11-20 14:19:00.899  3085  3104 I unitn   : [   0.631] ui: event State(Buffering)
+11-20 14:19:01.632  3085  3127 I unitn   : [   1.363] audio: stream content type "audio/aac"
+11-20 14:19:01.632  3085  3127 I unitn   : [   1.363] audio: ADTS stream AdtsHeader { object_type: 2, rate_index: 7, channel_config: 2, header_len: 7, frame_len: 759, blocks: 1 }
+11-20 14:19:01.636  3085  3105 I unitn   : [   1.368] audio: source ready, duration None
+11-20 14:19:01.636  3085  3105 I unitn   : [   1.368] audio: first chunk 2048 samples, 2 ch, 22050 Hz -> device 2 ch, 44100 Hz
+11-20 14:19:01.659  3085  3104 I unitn   : [   1.391] ui: event Position { position: 0.0, duration: None }
+11-20 14:19:01.659  3085  3104 I unitn   : [   1.391] ui: event State(Playing)
+11-20 14:19:01.660  3085  3104 I unitn   : [   1.391] ui: event StreamTitle("Oxygen Music - H�rsfai Istv�n")
+11-20 14:19:02.941  3085  3104 I unitn   : [   2.673] ui: event Position { position: 1.2693197278911565, duration: None }
+11-20 14:19:03.701  3085  3104 I unitn   : [   3.433] ui: event Position { position: 2.049410430839002, duration: None }
+11-20 14:19:04.701  3085  3104 I unitn   : [   4.433] ui: event Position { position: 3.0501360544217686, duration: None }
+11-20 14:19:05.701  3085  3104 I unitn   : [   5.433] ui: event Position { position: 4.08, duration: None }
+11-20 14:19:06.741  3085  3104 I unitn   : [   6.473] ui: event Position { position: 5.097074829931973, duration: None }
+11-20 14:19:07.741  3085  3104 I unitn   : [   7.473] ui: event Position { position: 6.097800453514739, duration: None }
+11-20 14:19:08.741  3085  3104 I unitn   : [   8.473] ui: event Position { position: 7.098526077097506, duration: None }
+11-20 14:19:10.521  3085  3104 I unitn   : [  10.253] ui: event Position { position: 8.137324263038549, duration: None }
+11-20 14:19:10.794  3085  3104 I unitn   : [  10.525] ui: event Position { position: 9.14546485260771, duration: None }
+11-20 14:19:11.823  3085  3104 I unitn   : [  11.555] ui: event Position { position: 10.131995464852608, duration: None }
+11-20 14:19:12.861  3085  3104 I unitn   : [  12.593] ui: event Position { position: 11.192403628117914, duration: None }
+11-20 14:19:13.910  3085  3104 I unitn   : [  13.642] ui: event Position { position: 12.238616780045351, duration: None }

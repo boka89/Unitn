@@ -1,0 +1,6 @@
+--------- beginning of main
+11-20 14:19:14.608  3196  3216 I unitn   : android: open_url test: true
+11-20 14:19:14.608  3196  3216 I unitn   : [   0.000] Unitn 0.6.2 on android x86_64
+11-20 14:19:14.610  3196  3216 I unitn   : [   0.002] startup: creating window
+11-20 14:19:14.612  3196  3216 I unitn   : [   0.004] startup: window shown
+11-20 14:19:14.613  3196  3216 I unitn   : [   0.005] startup: ready
