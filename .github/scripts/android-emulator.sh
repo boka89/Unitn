@@ -60,15 +60,15 @@ adb shell pm grant $APP android.permission.POST_NOTIFICATIONS
 
 # Positions (screen pixels, 1080x2400 at 420 dpi): the four tabs (Music,
 # Radio, Podcasts, Settings) are at x = 135, 405, 675, 945 on y = 2200; the
-# small player is at y = 2040, on the Music screens y = 1859 (cover x 95: play/stop; the
+# small player is at y = 2040, on the Music screens y = 1908 (cover x 95: play/stop; the
 # rest: tap or swipe up Now Playing, hold Queue, swipe left/right next/
 # previous song), its Next button at x 980.
 # Music's chips (Song, Album, Artist, Q, Playlist) sit between the small
-# player and the tabs on y = 2016, at x = 184, 375, 562, 711, 874. Now Playing's chips (Player,
+# player and the tabs on y = 2060, at x = 184, 375, 562, 711, 874. Now Playing's chips (Player,
 # Queue, Playlists, Sources) are on y = 249.
 TAB_Y=2200
-CHIP_Y=2016
-BAND_MUSIC_Y=1859
+CHIP_Y=2060
+BAND_MUSIC_Y=1908
 savelog() { applog > "$OUT/logcat-$1.txt"; }
 
 # --- 1. local songs, then into the background -------------------------------
