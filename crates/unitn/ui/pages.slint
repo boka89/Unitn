@@ -815,7 +815,7 @@ component LyricsPanel inherits Rectangle {
         height: parent.height - 12px - 26px;
         clip: true;
 
-        if root.lines.length > 0 && root.synced: VerticalLayout {
+        if root.lines.length > 0 && root.synced: synced-col := VerticalLayout {
             x: 24px;
             width: parent.width - 48px;
             y: parent.height * 0.42 - (Math.max(root.current, 0) + 0.5) * root.line-h;
@@ -829,6 +829,8 @@ component LyricsPanel inherits Rectangle {
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 overflow: elide;
+                // Fade out while scrolling off the top, instead of being cut in half.
+                opacity: Math.max(0, Math.min(1, (synced-col.y + i * root.line-h) / root.line-h));
                 animate font-size { duration: 200ms; }
             }
         }
