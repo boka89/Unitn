@@ -2,6 +2,27 @@
 
 Older versions: see the [changelog on the website](https://unitn.bokors.net/changelog/).
 
+## 0.5.17 — 2026-11-21
+
+More from **@jo-el414**: thanks for testing 0.5.16 and the new ideas (#14, #16, #19, #20).
+
+### New
+
+- **Genre on the album page**, after the year (from the songs' genre tags; for albums mixing
+  genres, the two most common). Local music for now. (#20)
+- **Artist photos folder**: downloaded artist photos are saved in an `artists` folder next to
+  `covers` in Unitn's data folder, named after the artist (`Daft Punk.jpg`). Photos from
+  earlier versions are moved there the next time the artist plays. (#16)
+- **Windows media overlay** (volume keys / Bluetooth headset): shows the album cover and the
+  name "Unitn". The cover also appears in the macOS Now Playing widget and Linux media
+  controls. (#19)
+
+### Fixed
+
+- Windows: the vertical scrollbar no longer covers the right end of list rows (the highlight of
+  the playing song, the stripes and the "…" buttons) in any list, also when it widens on hover.
+  The 0.5.16 fix only handled a horizontal scrollbar. (#14)
+
 ## 0.5.16 — 2026-11-21
 
 Thanks to **@jo-el414** for the bug reports and ideas (#14–#17).

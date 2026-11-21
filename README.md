@@ -8,7 +8,7 @@ no account and no tracking.
 
 **Website and downloads: [unitn.bokors.net](https://unitn.bokors.net)**
 
-> Status: v0.5.16 — young but usable. Feedback and contributions welcome.
+> Status: v0.5.17 — young but usable. Feedback and contributions welcome.
 
 ![Unitn playing an album, dark theme](docs/screenshots/dark-playing.png)
 
@@ -26,7 +26,7 @@ no account and no tracking.
 
 - **Local library**: scans your music folders (MP3, FLAC, AAC/M4A, ALAC, OGG Vorbis, WAV, AIFF),
   reading tags and embedded or folder cover art
-- **Albums, Artists and Songs** views with instant search, Apple-style striped track lists,
+- **Albums, Artists and Songs** views (album pages show year and genre) with instant search, Apple-style striped track lists,
   Comfy and Cozy list density, and a play marker on the current song
 - **Album art**: missing covers are downloaded from the free MusicBrainz / Cover Art Archive,
   and artist photos appear behind Now Playing: your own `artist.jpg` (`.png`, `.webp`) from the
@@ -187,11 +187,15 @@ preview, install the Slint VS Code extension or `slint-viewer` and open
 
 ## Where data is stored
 
-| OS      | Library database & covers                         | Settings                                 |
+| OS      | Library database, covers, artist photos           | Settings                                 |
 |---------|---------------------------------------------------|------------------------------------------|
 | Linux   | `~/.local/share/unitn/`                           | `~/.config/unitn/settings.json`          |
 | macOS   | `~/Library/Application Support/net.bokors.Unitn/` | same folder                              |
 | Windows | `%APPDATA%\bokors\Unitn\data\`                   | `%APPDATA%\bokors\Unitn\config\`        |
+
+Inside the data folder: `library.sqlite3` (the library), `covers/` (album art cache) and
+`artists/` (downloaded artist photos, named after the artist, e.g. `Daft Punk.jpg`).
+Your own `artist.jpg` files stay in your music folders and are not copied.
 
 On first start, your system Music folder is added automatically.
 

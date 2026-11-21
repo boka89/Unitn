@@ -104,6 +104,7 @@ export component AppWindow inherits Window {
     /// Key of the album the playing song belongs to ("" for none).
     in property <string> playing-album;
     in property <string> album-info;
+    in property <string> album-genre;
     in property <[TrackItem]> album-tracks;
     in property <[ArtistItem]> artists;
     in property <[TrackItem]> songs;
@@ -726,6 +727,7 @@ export component AppWindow inherits Window {
                             height: parent.height;
                             album: root.album;
                             info: root.album-info;
+                            genre: root.album-genre;
                             tracks: root.album-tracks;
                             current-key: root.current-key;
                             play(shuffled) => { root.play-album(shuffled); }
@@ -1445,16 +1447,23 @@ export component AppWindow inherits Window {
                             horizontal-scrollbar-policy: always-off;
                             for c[i] in root.fix-candidates: Rectangle {
                                 height: 60px;
-                                background: i == root.fix-selected ? Theme.accent-soft
-                                    : row-touch.has-hover ? Theme.surface-hover
-                                    : Math.mod(i, 2) == 1 ? (Theme.dark ? #ffffff0a : #0000000a) : transparent;
+                                // Highlight, kept clear of the scrollbar lane.
+                                Rectangle {
+                                    x: 0px;
+                                    width: parent.width - Theme.scroll-gutter;
+                                    height: parent.height;
+                                    border-radius: 0px;
+                                    background: i == root.fix-selected ? Theme.accent-soft
+                                        : row-touch.has-hover ? Theme.surface-hover
+                                        : Math.mod(i, 2) == 1 ? (Theme.dark ? #ffffff0a : #0000000a) : transparent;
+                                }
                                 row-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => { root.fix-select(i); }
                                 }
                                 HorizontalLayout {
                                     padding-left: 10px;
-                                    padding-right: 10px;
+                                    padding-right: 10px + Theme.scroll-gutter;
                                     spacing: 12px;
                                     VerticalLayout {
                                         alignment: center;
