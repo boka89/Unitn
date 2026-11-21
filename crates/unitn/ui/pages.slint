@@ -186,8 +186,20 @@ export component TrackRow inherits Rectangle {
     callback activated;
     /// "…" button pressed; position (window coordinates) for the menu.
     callback menu(length, length);
+    /// Playlists: a drag handle at the start of the row reorders the songs.
+    in property <bool> reorderable: false;
+    /// While reordering: this row is the one being moved.
+    in property <bool> dimmed: false;
+    /// While reordering: where the moved song will land (0 = not here,
+    /// 1 = above this row, 2 = below it).
+    in property <int> drop-line: 0;
+    callback reorder-start();
+    /// The handle was dragged this far (down is positive) since the start.
+    callback reorder-move(length);
+    callback reorder-end();
 
     height: Theme.compact ? 30px : 46px;
+    opacity: root.dimmed ? 0.45 : 1.0;
     // Highlight, kept clear of the scrollbar lane.
     Rectangle {
         x: 0px;
@@ -209,10 +221,47 @@ export component TrackRow inherits Rectangle {
         }
     }
 
+    if root.drop-line != 0: Rectangle {
+        x: 0px;
+        y: root.drop-line == 1 ? 0px : parent.height - 3px;
+        width: parent.width - Theme.scroll-gutter;
+        height: 3px;
+        border-radius: 2px;
+        background: Theme.accent;
+    }
+
     HorizontalLayout {
-        padding-left: 12px;
+        padding-left: root.reorderable ? 4px : 12px;
         padding-right: 12px + Theme.scroll-gutter;
-        spacing: 16px;
+        spacing: root.reorderable ? 8px : 16px;
+        // Drag handle (playlists).
+        if root.reorderable: Rectangle {
+            width: 24px;
+            Image {
+                source: @image-url("icons/drag.svg");
+                width: 16px;
+                height: 16px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                colorize: handle.has-hover || handle.pressed ? Theme.fg : Theme.fg-muted;
+            }
+            handle := TouchArea {
+                mouse-cursor: move;
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                        root.reorder-start();
+                    }
+                    if (event.kind == PointerEventKind.up) {
+                        root.reorder-end();
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        root.reorder-move(self.mouse-y - self.pressed-y);
+                    }
+                }
+            }
+        }
         Rectangle {
             width: 28px;
             if !root.current: Text {
@@ -1564,6 +1613,12 @@ export component PlaylistPage inherits Rectangle {
     callback export();
     callback track-menu(int, length, length);
     callback density-changed(bool);
+    /// Move the song at the first index to the second.
+    callback move-track(int, int);
+    /// Reordering by dragging a song's handle.
+    property <int> drag-from: -1;
+    property <int> drop-target: -1;
+    property <length> row-h: Theme.compact ? 30px : 46px;
 
     VerticalLayout {
         padding: 24px;
@@ -1624,7 +1679,8 @@ export component PlaylistPage inherits Rectangle {
                     }
                 }
                 Text {
-                    text: root.editing ? "Press Enter to save the new name" : root.info + "  ·  click the name to rename";
+                    text: root.editing ? "Press Enter to save the new name"
+                        : root.info + "  ·  click the name to rename" + (root.tracks.length > 1 ? ", drag the handle to reorder" : "");
                     color: Theme.fg-muted;
                     font-size: 13px;
                 }
@@ -1677,8 +1733,29 @@ export component PlaylistPage inherits Rectangle {
                 striped: Math.mod(i, 2) == 1;
                 current: track.key == root.current-key;
                 drag-what: "song:2:" + i;
+                reorderable: root.tracks.length > 1;
+                dimmed: root.drag-from == i;
+                drop-line: root.drag-from < 0 || root.drop-target != i || i == root.drag-from ? 0
+                    : (i < root.drag-from ? 1 : 2);
                 activated => { root.play-track(i); }
                 menu(x, y) => { root.track-menu(i, x, y); }
+                reorder-start => {
+                    root.drag-from = i;
+                    root.drop-target = i;
+                }
+                reorder-move(dy) => {
+                    if (root.drag-from >= 0) {
+                        root.drop-target = Math.max(0, Math.min(root.tracks.length - 1,
+                            root.drag-from + Math.round(dy / root.row-h)));
+                    }
+                }
+                reorder-end => {
+                    if (root.drag-from >= 0 && root.drop-target != root.drag-from) {
+                        root.move-track(root.drag-from, root.drop-target);
+                    }
+                    root.drag-from = -1;
+                    root.drop-target = -1;
+                }
             }
         }
     }

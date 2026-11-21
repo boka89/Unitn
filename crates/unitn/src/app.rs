@@ -1718,6 +1718,18 @@ impl App {
         }
     }
 
+    /// Moves a song of the open playlist to another position and saves it.
+    pub fn move_playlist_track(&mut self, from: usize, to: usize) {
+        let Some(id) = self.current_playlist_id() else { return };
+        if from == to || from >= self.playlist_tracks.len() || to >= self.playlist_tracks.len() {
+            return;
+        }
+        if let Err(e) = self.library.move_in_playlist(id, from, to) {
+            self.show_toast(&format!("Could not move the song: {e}"));
+        }
+        self.open_playlist_id(id);
+    }
+
     fn create_playlist_with(&mut self, base: &str, paths: &[PathBuf]) -> Option<i64> {
         let name = self.unique_playlist_name(base);
         match self.library.create_playlist(&name).and_then(|id| self.library.add_to_playlist(id, paths).map(|_| id)) {
@@ -2384,6 +2396,11 @@ impl App {
             return self.open_fix_dialog();
         }
         let tracks = self.menu_tracks();
+        if action == 6 || action == 7 {
+            let index = self.menu_target.1.max(0) as usize;
+            let to = if action == 6 { 0 } else { self.playlist_tracks.len().saturating_sub(1) };
+            return self.move_playlist_track(index, to);
+        }
         if action == 4 {
             let (Some(id), index) = (self.current_playlist_id(), self.menu_target.1) else { return };
             if let Err(e) = self.library.remove_from_playlist(id, index.max(0) as usize) {
@@ -3758,6 +3775,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_remove_queue_index, |a, i| a.remove_queue_index(i.max(0) as usize));
     on!(on_clear_queue, |a| a.clear_queue());
     on!(on_move_queue_index, |a, from, to| a.move_queue_item(from.max(0) as usize, to.max(0) as usize));
+    on!(on_move_playlist_track, |a, from, to| a.move_playlist_track(from.max(0) as usize, to.max(0) as usize));
     on!(on_toggle_play, |a| a.toggle_play());
     on!(on_next, |a| a.next(false));
     on!(on_previous, |a| a.previous());

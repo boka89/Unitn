@@ -218,6 +218,8 @@ export component AppWindow inherits Window {
     callback fix-cancel();
     callback track-menu-requested(int, int);
     callback track-menu-action(int, int);
+    /// Reorder a song in the open playlist (from index, to index).
+    callback move-playlist-track(int, int);
 
     // Settings
     in property <[string]> folders;
@@ -857,6 +859,7 @@ export component AppWindow inherits Window {
                         delete => { root.delete-playlist(); }
                         export => { root.export-playlist(); }
                         track-menu(i, x, y) => { root.show-track-menu(2, i, x, y); }
+                        move-track(from, to) => { root.move-playlist-track(from, to); }
                         density-changed(c) => {
                             Theme.compact = c;
                             root.density-changed(c);
@@ -1192,6 +1195,16 @@ export component AppWindow inherits Window {
                     clicked => { root.track-menu-action(5, -1); }
                 }
                 if root.menu-context == 2: Rectangle { height: 1px; background: Theme.border; }
+                if root.menu-context == 2: MenuRow {
+                    text: "Move to top";
+                    icon: @image-url("icons/move-top.svg");
+                    clicked => { root.track-menu-action(6, -1); }
+                }
+                if root.menu-context == 2: MenuRow {
+                    text: "Move to bottom";
+                    icon: @image-url("icons/move-bottom.svg");
+                    clicked => { root.track-menu-action(7, -1); }
+                }
                 if root.menu-context == 2: MenuRow {
                     text: "Remove from playlist";
                     icon: @image-url("icons/trash.svg");
