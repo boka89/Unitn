@@ -111,7 +111,7 @@ run_theme() { # theme-number name
   shot "$2-playing"
   click 120 117 2          # Albums: the playing album is marked
   shot "$2-albums-playing"
-  click 120 411 3          # Now Playing (visualizer)
+  click 45 776 3           # Now Playing (visualizer): the cover on the player bar
   shot "$2-nowplaying"
   xdotool mousemove 900 480; sleep 0.8   # mouse over the visualizer: its buttons appear
   shot "$2-nowplaying-controls"
@@ -150,7 +150,7 @@ run_theme() { # theme-number name
   if [ "$2" = dark ]; then
     click 700 168 10       # play first station
     shot "$2-radio-playing"
-    click 120 411 3
+    click 45 776 3         # Now Playing: the cover on the player bar
     shot "$2-nowplaying-radio"
     click 120 327 2        # Podcasts
     shot "$2-podcasts-empty"
@@ -166,7 +166,7 @@ run_theme() { # theme-number name
     shot "$2-podcast-show"
     click 600 250 12       # play the newest episode
     shot "$2-podcast-playing"
-    click 120 411 3
+    click 45 776 3         # Now Playing: the cover on the player bar
     shot "$2-nowplaying-podcast"
     sleep 14                 # progress is saved every 15 s
     click 120 327 2          # back to the show: progress bar and "… left"

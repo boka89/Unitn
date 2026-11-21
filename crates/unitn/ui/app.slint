@@ -319,6 +319,21 @@ export component AppWindow inherits Window {
     callback glass-keep();
     callback remove-folder(int);
 
+    /// Volume to bring back when unmuting.
+    property <float> volume-before-mute: 0.8;
+    function set-volume(v: float) {
+        root.volume = Math.max(0.0, Math.min(1.0, v));
+        root.volume-changed(root.volume);
+    }
+    function toggle-mute() {
+        if (root.volume > 0.001) {
+            root.volume-before-mute = root.volume;
+            root.set-volume(0.0);
+        } else {
+            root.set-volume(root.volume-before-mute > 0.001 ? root.volume-before-mute : 0.8);
+        }
+    }
+
     function show-track-menu(context: int, index: int, x: length, y: length) {
         root.menu-context = context;
         root.menu-x = x;
@@ -362,16 +377,9 @@ export component AppWindow inherits Window {
             if (event.text == " ") { root.toggle-play(); return accept; }
             if (event.text == Key.RightArrow) { root.seek-relative(5); return accept; }
             if (event.text == Key.LeftArrow) { root.seek-relative(-5); return accept; }
-            if (event.text == Key.UpArrow) {
-                root.volume = Math.min(1.0, root.volume + 0.05);
-                root.volume-changed(root.volume);
-                return accept;
-            }
-            if (event.text == Key.DownArrow) {
-                root.volume = Math.max(0.0, root.volume - 0.05);
-                root.volume-changed(root.volume);
-                return accept;
-            }
+            if (event.text == Key.UpArrow) { root.set-volume(root.volume + 0.05); return accept; }
+            if (event.text == Key.DownArrow) { root.set-volume(root.volume - 0.05); return accept; }
+            if (event.text == "m" || event.text == "M") { root.toggle-mute(); return accept; }
             if (event.text == "v" || event.text == "V") { root.viz-fullscreen = true; return accept; }
             if (event.text == "s" || event.text == "S") { root.toggle-shuffle(); return accept; }
             if (event.text == "r" || event.text == "R") { root.cycle-repeat(); return accept; }
@@ -1074,24 +1082,49 @@ export component AppWindow inherits Window {
                                 peaks: root.mini-peaks;
                             }
                         }
-                        Rectangle { width: 16px; }
-                        VerticalLayout {
-                            alignment: center;
-                            Image {
-                                source: root.volume <= 0.001 ? @image-url("icons/volume-off.svg") : @image-url("icons/volume.svg");
-                                width: 18px;
-                                height: 18px;
-                                colorize: Theme.fg-muted;
+                        Rectangle { width: 10px; }
+                        // Volume: click the speaker to mute / unmute; the mouse
+                        // wheel over the speaker or the bar changes the volume.
+                        volume-box := Rectangle {
+                            width: volume-row.preferred-width;
+                            wheel := TouchArea {
+                                scroll-event(event) => {
+                                    if (event.delta-y == 0px) { return reject; }
+                                    // Mouse wheel notch: 5 %; smooth trackpad scrolling: finer steps.
+                                    root.set-volume(root.volume + (Math.abs(event.delta-y / 1px) >= 10
+                                        ? (event.delta-y > 0px ? 0.05 : -0.05)
+                                        : event.delta-y / 1px * 0.005));
+                                    return accept;
+                                }
                             }
-                        }
-                        VerticalLayout {
-                            alignment: center;
-                            SeekBar {
-                                width: 120px;
-                                value: root.volume;
-                                changed(v) => {
-                                    root.volume = v;
-                                    root.volume-changed(v);
+                            volume-row := HorizontalLayout {
+                                spacing: 2px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    mute := Rectangle {
+                                        width: 28px;
+                                        height: 28px;
+                                        border-radius: 14px;
+                                        background: mute-touch.has-hover ? Theme.fg.transparentize(0.9) : transparent;
+                                        Image {
+                                            source: root.volume <= 0.001 ? @image-url("icons/volume-off.svg") : @image-url("icons/volume.svg");
+                                            width: 18px;
+                                            height: 18px;
+                                            colorize: root.volume <= 0.001 ? Theme.accent : (mute-touch.has-hover ? Theme.fg : Theme.fg-muted);
+                                        }
+                                        mute-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.toggle-mute(); }
+                                        }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    SeekBar {
+                                        width: 120px;
+                                        value: root.volume;
+                                        changed(v) => { root.set-volume(v); }
+                                    }
                                 }
                             }
                         }
@@ -1409,6 +1442,7 @@ export component AppWindow inherits Window {
                             vertical-alignment: center;
                         }
                         ListView {
+                            horizontal-scrollbar-policy: always-off;
                             for c[i] in root.fix-candidates: Rectangle {
                                 height: 60px;
                                 background: i == root.fix-selected ? Theme.accent-soft

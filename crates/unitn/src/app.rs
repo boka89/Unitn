@@ -139,6 +139,13 @@ fn decode_thumb(path: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixe
     Some(slint::SharedPixelBuffer::clone_from_slice(rgba.as_raw(), rgba.width(), rgba.height()))
 }
 
+/// Loads an image at full size, in any format the image crate reads (used
+/// for WebP, which Slint can't load itself).
+fn decode_full(path: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
+    let rgba = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok()?.to_rgba8();
+    Some(slint::SharedPixelBuffer::clone_from_slice(rgba.as_raw(), rgba.width(), rgba.height()))
+}
+
 /// A podcast episode (its path is a made-up "podcast://…" key).
 fn is_episode(t: &Track) -> bool {
     t.path.to_string_lossy().starts_with("podcast://")
@@ -881,8 +888,13 @@ impl App {
             }
             Bg::ArtistImage { artist, path } => {
                 self.artist_image_pending.remove(&artist);
+                // A local artist.jpg, if the song has one, stays in front of
+                // a downloaded photo.
                 let current = match self.current_item() {
-                    Some(Item::Track(t)) => t.grouping_artist() == artist,
+                    Some(Item::Track(t)) => {
+                        t.grouping_artist() == artist
+                            && (t.is_remote() || scanner::local_artist_image(&t.path).is_none())
+                    }
                     _ => false,
                 };
                 if current {
@@ -1039,7 +1051,9 @@ impl App {
         let entry = self
             .covers
             .entry(path.clone())
-            .or_insert_with(|| Image::load_from_path(path).ok());
+            // Slint reads PNG and JPEG itself; other formats (WebP artist
+            // photos) go through the image crate.
+            .or_insert_with(|| Image::load_from_path(path).ok().or_else(|| decode_full(path).map(Image::from_rgba8)));
         match entry {
             Some(img) => (img.clone(), true),
             None => (Image::default(), false),
@@ -1366,8 +1380,12 @@ impl App {
         }
     }
 
-    /// Shows the artist's photo behind Now Playing, downloading it once.
-    fn update_backdrop(&mut self, artist: &str) {
+    /// Shows the artist's photo behind Now Playing: an `artist.jpg` kept
+    /// with the music if there is one, else one downloaded once.
+    fn update_backdrop(&mut self, artist: &str, song: Option<&Path>) {
+        if let Some(local) = song.and_then(scanner::local_artist_image) {
+            return self.show_backdrop(Some(local));
+        }
         match self.library.artist_image(artist) {
             Ok(Some(path)) => return self.show_backdrop(path),
             Ok(None) => self.show_backdrop(None),
@@ -3139,7 +3157,8 @@ impl App {
                 };
                 ui.set_playing_album(album.into());
                 self.media.set_metadata(&t.title, &t.artist, &t.album, self.duration);
-                self.update_backdrop(t.grouping_artist());
+                let song = (!t.is_remote()).then(|| t.path.clone());
+                self.update_backdrop(t.grouping_artist(), song.as_deref());
             }
             Some(Item::Station(s)) => {
                 let (title, subtitle) = if self.stream_title.is_empty() {

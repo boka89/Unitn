@@ -218,6 +218,32 @@ fn folder_cover(track: &Path) -> Option<PathBuf> {
     FOLDER_COVERS.iter().map(|n| dir.join(n)).find(|p| p.is_file())
 }
 
+/// Artist photo names people keep with their music (the Kodi / Jellyfin
+/// convention), compared without regard to case.
+const ARTIST_IMAGES: &[&str] = &["artist.jpg", "artist.jpeg", "artist.png", "artist.webp"];
+
+/// A photo of the artist stored with the music: `artist.jpg` (or `.jpeg`,
+/// `.png`, `.webp`) in the song's own folder or the folder above it, as in
+/// `Music/Artist/artist.jpg` next to `Music/Artist/Album/01 Song.flac`.
+pub fn local_artist_image(track: &Path) -> Option<PathBuf> {
+    let album_dir = track.parent()?;
+    let dirs = [Some(album_dir), album_dir.parent()];
+    dirs.into_iter().flatten().find_map(|dir| {
+        let mut found: Vec<(usize, PathBuf)> = fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                let rank = ARTIST_IMAGES.iter().position(|n| *n == name)?;
+                let path = e.path();
+                path.is_file().then_some((rank, path))
+            })
+            .collect();
+        found.sort();
+        found.into_iter().next().map(|(_, p)| p)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,6 +281,25 @@ mod tests {
         let stats = scan(&lib, &folders, &root.join("covers"), |_| {}).unwrap();
         assert_eq!(stats.removed, 1);
         assert_eq!(lib.track_count().unwrap(), 0);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn finds_local_artist_images() {
+        let root = std::env::temp_dir().join(format!("unitn-artist-img-{}", std::process::id()));
+        let album = root.join("Artist/Album");
+        fs::create_dir_all(&album).unwrap();
+        let song = album.join("01 Song.flac");
+        fs::write(&song, b"x").unwrap();
+        assert_eq!(local_artist_image(&song), None);
+
+        // In the artist folder, any capitalisation.
+        fs::write(root.join("Artist/Artist.WEBP"), b"x").unwrap();
+        assert_eq!(local_artist_image(&song), Some(root.join("Artist/Artist.WEBP")));
+        // The song's own folder comes first, and .jpg before .png.
+        fs::write(album.join("artist.png"), b"x").unwrap();
+        fs::write(album.join("artist.jpg"), b"x").unwrap();
+        assert_eq!(local_artist_image(&song), Some(album.join("artist.jpg")));
         let _ = fs::remove_dir_all(&root);
     }
 
