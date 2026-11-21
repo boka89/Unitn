@@ -111,6 +111,11 @@ run_theme() { # theme-number name
   shot "$2-playing"
   click 120 117 2          # Albums: the playing album is marked
   shot "$2-albums-playing"
+  xdotool windowfocus "$WID" 2>/dev/null || true
+  xdotool key ctrl+shift+m; sleep 2   # mini player
+  shot "$2-mini"
+  xdotool key ctrl+shift+m; sleep 2   # and back to the full window
+  shot "$2-after-mini"
   click 45 776 3           # Now Playing (visualizer): the cover on the player bar
   shot "$2-nowplaying"
   xdotool mousemove 900 480; sleep 0.8   # mouse over the visualizer: its buttons appear
