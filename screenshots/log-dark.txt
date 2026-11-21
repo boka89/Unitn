@@ -1,0 +1,225 @@
+[   0.000] Unitn 0.5.16 on linux x86_64
+[   0.007] startup: creating window
+[   0.028] startup: ready
+[   0.028] audio: load File("/tmp/unitn-intro.m4a")
+[   0.030] startup: library shown in 0 ms
+[   0.031] startup: ready in 0 ms
+[   0.032] audio: output device "default", F32, 2 ch, 44100 Hz
+[   0.033] audio: preloading 0.1 MB
+[   0.053] audio: source ready, duration Some(6.521333333333334)
+[   0.053] audio: first chunk 2048 samples, 2 ch, 48000 Hz -> device 2 ch, 44100 Hz
+[   0.278] art: looking up 1 albums online
+[   2.368] art: downloaded 1 covers
+[   5.497] intro: 138 of 138 frames shown
+[   6.335] startup: window shown
+[   6.338] media controls attached
+[  26.927] audio: load File("/home/runner/Music/Aurora Lane/Northern Lights/01 Polar Night.mp3")
+[  26.928] audio: output device "default", F32, 2 ch, 44100 Hz
+[  26.929] audio: preloading 1.2 MB
+[  26.929] audio: preloading 1.4 MB
+[  26.949] audio: next track prepared
+[  26.949] audio: source ready, duration Some(173.0)
+[  26.949] audio: first chunk 47 samples, 1 ch, 48000 Hz -> device 2 ch, 44100 Hz
+[  26.964] ui: event State(Buffering)
+[  26.964] ui: event Position { position: 0.0, duration: Some(173.0) }
+[  26.964] ui: event State(Playing)
+[  27.305] art: artist photo for Aurora Lane failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Aurora+Lane%22&fmt=json&limit=3: status code 503
+[  30.021] ui: event Position { position: 1.124671201814059, duration: Some(173.0) }
+[  30.996] ui: event Position { position: 2.1244444444444444, duration: Some(173.0) }
+[  32.047] ui: event Position { position: 3.149206349206349, duration: Some(173.0) }
+[  33.063] ui: event Position { position: 4.148979591836735, duration: Some(173.0) }
+[  34.120] ui: event Position { position: 5.198684807256236, duration: Some(173.0) }
+[  35.077] ui: event Position { position: 6.1984580498866215, duration: Some(173.0) }
+[  36.153] ui: event Position { position: 7.225668934240363, duration: Some(173.0) }
+[  37.162] ui: event Position { position: 8.22609977324263, duration: Some(173.0) }
+[  37.932] ui: event Position { position: 9.000770975056689, duration: Some(173.0) }
+[  38.975] ui: event Position { position: 10.00031746031746, duration: Some(173.0) }
+[  39.951] ui: event Position { position: 11.02485260770975, duration: Some(173.0) }
+[  40.911] ui: event Position { position: 12.024399092970521, duration: Some(173.0) }
+[  42.093] ui: event Position { position: 13.023945578231293, duration: Some(173.0) }
+[  43.124] ui: event Position { position: 14.023492063492064, duration: Some(173.0) }
+[  44.120] ui: event Position { position: 15.07297052154195, duration: Some(173.0) }
+[  45.193] ui: event Position { position: 16.07251700680272, duration: Some(173.0) }
+[  45.990] ui: event Position { position: 17.097074829931973, duration: Some(173.0) }
+[  46.986] ui: event Position { position: 18.121632653061223, duration: Some(173.0) }
+[  48.102] ui: event Position { position: 19.121179138321995, duration: Some(173.0) }
+[  49.208] ui: event Position { position: 20.145714285714284, duration: Some(173.0) }
+[  50.032] ui: event Position { position: 21.145260770975057, duration: Some(173.0) }
+[  51.224] ui: event Position { position: 22.14480725623583, duration: Some(173.0) }
+[  52.032] ui: event Position { position: 23.194285714285716, duration: Some(173.0) }
+[  53.091] ui: event Position { position: 24.218843537414966, duration: Some(173.0) }
+[  54.104] ui: event Position { position: 25.24340136054422, duration: Some(173.0) }
+[  54.887] ui: event Position { position: 26.018049886621316, duration: Some(173.0) }
+[  55.906] ui: event Position { position: 27.017596371882085, duration: Some(173.0) }
+[  56.937] ui: event Position { position: 28.067074829931972, duration: Some(173.0) }
+[  57.929] ui: event Position { position: 29.091632653061225, duration: Some(173.0) }
+[  58.955] ui: event Position { position: 30.116190476190475, duration: Some(173.0) }
+[  59.990] ui: event Position { position: 31.140725623582767, duration: Some(173.0) }
+[  61.032] ui: event Position { position: 32.14027210884354, duration: Some(173.0) }
+[  62.047] ui: event Position { position: 33.18975056689342, duration: Some(173.0) }
+[  63.048] ui: event Position { position: 34.189297052154195, duration: Some(173.0) }
+[  64.069] ui: event Position { position: 35.21383219954649, duration: Some(173.0) }
+[  65.084] ui: event Position { position: 36.238412698412695, duration: Some(173.0) }
+[  65.866] ui: event Position { position: 37.013061224489796, duration: Some(173.0) }
+[  66.876] ui: event Position { position: 38.01260770975057, duration: Some(173.0) }
+[  67.911] ui: event Position { position: 39.01215419501134, duration: Some(173.0) }
+[  68.916] ui: event Position { position: 40.086621315192744, duration: Some(173.0) }
+[  69.945] ui: event Position { position: 41.11120181405896, duration: Some(173.0) }
+[  70.961] ui: event Position { position: 42.11074829931973, duration: Some(173.0) }
+[  72.019] ui: event Position { position: 43.135283446712016, duration: Some(173.0) }
+[  73.032] ui: event Position { position: 44.13482993197279, duration: Some(173.0) }
+[  74.040] ui: event Position { position: 45.18430839002268, duration: Some(173.0) }
+[  75.069] ui: event Position { position: 46.208843537414964, duration: Some(173.0) }
+[  76.095] ui: event Position { position: 47.23342403628118, duration: Some(173.0) }
+[  77.109] ui: event Position { position: 48.23297052154195, duration: Some(173.0) }
+[  77.876] ui: event Position { position: 49.007619047619045, duration: Some(173.0) }
+[  78.880] ui: event Position { position: 50.00716553287982, duration: Some(173.0) }
+[  79.893] ui: event Position { position: 51.00671201814059, duration: Some(173.0) }
+[  80.906] ui: event Position { position: 52.05619047619047, duration: Some(173.0) }
+[  81.916] ui: event Position { position: 53.080725623582765, duration: Some(173.0) }
+[  82.674] audio: load Url("https://xmas-node1.zip.wf/live.aac")
+[  82.691] ui: event Position { position: 53.830385487528346, duration: Some(173.0) }
+[  82.691] ui: event State(Buffering)
+[  83.151] audio: stream content type "audio/aac"
+[  83.152] audio: ADTS stream AdtsHeader { object_type: 2, rate_index: 4, channel_config: 2, header_len: 7, frame_len: 270, blocks: 1 }
+[  83.159] audio: source ready, duration None
+[  83.159] audio: first chunk 2048 samples, 2 ch, 44100 Hz -> device 2 ch, 44100 Hz
+[  83.180] ui: event Position { position: 0.0, duration: None }
+[  83.180] ui: event State(Playing)
+[  83.180] ui: event StreamTitle("Dan + Shay - Officially Christmas")
+[  84.435] ui: event Position { position: 1.274467120181406, duration: None }
+[  85.208] ui: event Position { position: 2.024126984126984, duration: None }
+[  86.221] ui: event Position { position: 3.0486621315192743, duration: None }
+[  87.237] ui: event Position { position: 4.0482086167800455, duration: None }
+[  88.256] ui: event Position { position: 5.047755102040816, duration: None }
+[  89.275] ui: event Position { position: 6.097233560090703, duration: None }
+[  90.295] ui: event Position { position: 7.0967800453514736, duration: None }
+[  91.315] ui: event Position { position: 8.121315192743765, duration: None }
+[  92.334] ui: event Position { position: 9.145895691609978, duration: None }
+[  92.375] ui: event StreamTitle("Pentatonix - Hallelujah")
+[  93.357] ui: event Position { position: 10.145442176870748, duration: None }
+[  94.372] ui: event Position { position: 11.169977324263039, duration: None }
+[  95.383] ui: event Position { position: 12.16952380952381, duration: None }
+[  96.405] ui: event Position { position: 13.219002267573696, duration: None }
+[  97.418] ui: event Position { position: 14.218548752834467, duration: None }
+[  98.431] ui: event Position { position: 15.218095238095238, duration: None }
+[  99.438] ui: event Position { position: 16.24263038548753, duration: None }
+[ 100.448] ui: event Position { position: 17.2421768707483, duration: None }
+[ 101.215] ui: event Position { position: 18.016848072562357, duration: None }
+[ 102.225] ui: event Position { position: 19.04140589569161, duration: None }
+[ 103.239] ui: event Position { position: 20.04095238095238, duration: None }
+[ 104.250] ui: event Position { position: 21.040498866213152, duration: None }
+[ 105.264] ui: event Position { position: 22.04004535147392, duration: None }
+[ 106.275] ui: event Position { position: 23.089523809523808, duration: None }
+[ 107.286] ui: event Position { position: 24.1140589569161, duration: None }
+[ 107.947] podcasts: subscribed to NASA's Curious Universe (111 episodes)
+[ 108.313] ui: event Position { position: 25.11360544217687, duration: None }
+[ 109.331] ui: event Position { position: 26.138163265306122, duration: None }
+[ 110.343] ui: event Position { position: 27.162721088435376, duration: None }
+[ 111.361] ui: event Position { position: 28.162267573696145, duration: None }
+[ 112.374] ui: event Position { position: 29.161814058956917, duration: None }
+[ 113.389] ui: event Position { position: 30.211292517006804, duration: None }
+[ 114.397] ui: event Position { position: 31.210839002267573, duration: None }
+[ 115.408] ui: event Position { position: 32.23537414965986, duration: None }
+[ 116.184] ui: event Position { position: 33.01004535147392, duration: None }
+[ 117.196] ui: event Position { position: 34.00959183673469, duration: None }
+[ 118.213] ui: event Position { position: 35.03414965986394, duration: None }
+[ 119.228] ui: event Position { position: 36.033696145124715, duration: None }
+[ 120.250] ui: event Position { position: 37.03324263038549, duration: None }
+[ 121.264] ui: event Position { position: 38.08272108843538, duration: None }
+[ 122.279] ui: event Position { position: 39.10725623582766, duration: None }
+[ 123.291] ui: event Position { position: 40.08204081632653, duration: None }
+[ 124.303] ui: event Position { position: 41.081814058956915, duration: None }
+[ 125.316] ui: event Position { position: 42.10657596371882, duration: None }
+[ 126.328] ui: event Position { position: 43.10634920634921, duration: None }
+[ 127.342] ui: event Position { position: 44.131133786848075, duration: None }
+[ 128.362] ui: event Position { position: 45.13090702947846, duration: None }
+[ 129.377] ui: event Position { position: 46.15566893424036, duration: None }
+[ 130.386] ui: event Position { position: 47.18043083900227, duration: None }
+[ 131.406] ui: event Position { position: 48.18020408163265, duration: None }
+[ 132.190] audio: load Remote("https://chrt.fm/track/477F33/traffic.megaphone.fm/NATIONALAERONAUTICSANDSPACEADMINISTRATION6710865215.mp3", Some("mp3"))
+[ 132.210] ui: event State(Buffering)
+[ 132.262] audio: stream reader finished
+[ 132.846] audio: server file "audio/mpeg", 48.1 MB
+[ 132.932] audio: source ready, duration Some(2088.019591836735)
+[ 132.932] audio: first chunk 2304 samples, 2 ch, 44100 Hz -> device 2 ch, 44100 Hz
+[ 132.939] ui: event Position { position: 0.0, duration: Some(2088.019591836735) }
+[ 132.939] ui: event State(Playing)
+[ 133.952] ui: event Position { position: 1.0247619047619048, duration: Some(2088.019591836735) }
+[ 134.975] ui: event Position { position: 2.0495238095238095, duration: Some(2088.019591836735) }
+[ 135.994] ui: event Position { position: 3.049297052154195, duration: Some(2088.019591836735) }
+[ 137.007] ui: event Position { position: 4.0740589569161, duration: Some(2088.019591836735) }
+[ 138.019] ui: event Position { position: 5.098843537414966, duration: Some(2088.019591836735) }
+[ 139.029] ui: event Position { position: 6.098616780045352, duration: Some(2088.019591836735) }
+[ 140.041] ui: event Position { position: 7.123378684807256, duration: Some(2088.019591836735) }
+[ 141.095] ui: event Position { position: 8.148140589569161, duration: Some(2088.019591836735) }
+[ 142.112] ui: event Position { position: 9.147913832199546, duration: Some(2088.019591836735) }
+[ 143.121] ui: event Position { position: 10.172675736961452, duration: Some(2088.019591836735) }
+[ 144.133] ui: event Position { position: 11.197460317460317, duration: Some(2088.019591836735) }
+[ 145.148] ui: event Position { position: 12.197233560090703, duration: Some(2088.019591836735) }
+[ 146.169] ui: event Position { position: 13.221995464852608, duration: Some(2088.019591836735) }
+[ 147.146] ui: event Position { position: 14.221768707482994, duration: Some(2088.019591836735) }
+[ 148.162] ui: event Position { position: 15.246530612244898, duration: Some(2088.019591836735) }
+[ 149.181] ui: event Position { position: 16.246303854875283, duration: Some(2088.019591836735) }
+[ 149.952] ui: event Position { position: 17.021133786848072, duration: Some(2088.019591836735) }
+[ 150.965] ui: event Position { position: 18.020907029478458, duration: Some(2088.019591836735) }
+[ 151.984] ui: event Position { position: 19.045668934240364, duration: Some(2088.019591836735) }
+[ 153.002] ui: event Position { position: 20.045442176870747, duration: Some(2088.019591836735) }
+[ 154.023] ui: event Position { position: 21.070204081632653, duration: Some(2088.019591836735) }
+[ 155.045] ui: event Position { position: 22.09498866213152, duration: Some(2088.019591836735) }
+[ 156.049] ui: event Position { position: 23.094761904761906, duration: Some(2088.019591836735) }
+[ 157.064] ui: event Position { position: 24.11952380952381, duration: Some(2088.019591836735) }
+[ 158.084] ui: event Position { position: 25.119297052154195, duration: Some(2088.019591836735) }
+[ 159.074] ui: event Position { position: 26.1440589569161, duration: Some(2088.019591836735) }
+[ 160.080] ui: event Position { position: 27.168820861678004, duration: Some(2088.019591836735) }
+[ 161.131] ui: event Position { position: 28.16859410430839, duration: Some(2088.019591836735) }
+[ 162.144] ui: event Position { position: 29.193378684807257, duration: Some(2088.019591836735) }
+[ 163.149] ui: event Position { position: 30.21814058956916, duration: Some(2088.019591836735) }
+[ 164.165] ui: event Position { position: 31.217913832199546, duration: Some(2088.019591836735) }
+[ 165.179] ui: event Position { position: 32.24267573696145, duration: Some(2088.019591836735) }
+[ 165.944] ui: event Position { position: 33.01750566893424, duration: Some(2088.019591836735) }
+[ 166.963] ui: event Position { position: 34.017278911564624, duration: Some(2088.019591836735) }
+[ 167.011] audio: load Remote("https://chrt.fm/track/477F33/traffic.megaphone.fm/NATIONALAERONAUTICSANDSPACEADMINISTRATION6710865215.mp3", Some("mp3"))
+[ 167.045] ui: event State(Buffering)
+[ 167.478] audio: server file "audio/mpeg", 48.1 MB
+[ 167.559] audio: source ready, duration Some(2088.019591836735)
+[ 167.559] audio: first chunk 2304 samples, 2 ch, 44100 Hz -> device 2 ch, 44100 Hz
+[ 167.566] ui: event Position { position: 0.0, duration: Some(2088.019591836735) }
+[ 167.566] ui: event State(Playing)
+[ 167.567] podcasts: resuming at 30 s
+[ 167.607] ui: event Position { position: 30.468072562358277, duration: Some(2088.019591836735) }
+[ 168.327] ui: event Position { position: 31.192925170068026, duration: Some(2088.019591836735) }
+[ 169.339] ui: event Position { position: 32.21768707482993, duration: Some(2088.019591836735) }
+[ 170.360] ui: event Position { position: 33.217460317460315, duration: Some(2088.019591836735) }
+[ 171.372] ui: event Position { position: 34.242222222222225, duration: Some(2088.019591836735) }
+[ 172.140] ui: event Position { position: 35.017052154195014, duration: Some(2088.019591836735) }
+[ 173.148] ui: event Position { position: 36.016825396825396, duration: Some(2088.019591836735) }
+[ 174.165] ui: event Position { position: 37.0415873015873, duration: Some(2088.019591836735) }
+[ 175.188] ui: event Position { position: 38.06634920634921, duration: Some(2088.019591836735) }
+[ 176.207] ui: event Position { position: 39.091133786848076, duration: Some(2088.019591836735) }
+[ 177.228] ui: event Position { position: 40.09090702947846, duration: Some(2088.019591836735) }
+[ 178.247] ui: event Position { position: 41.11566893424036, duration: Some(2088.019591836735) }
+[ 179.282] ui: event Position { position: 42.14043083900226, duration: Some(2088.019591836735) }
+[ 180.287] ui: event Position { position: 43.14020408163265, duration: Some(2088.019591836735) }
+[ 181.309] ui: event Position { position: 44.164965986394556, duration: Some(2088.019591836735) }
+[ 182.329] ui: event Position { position: 45.18975056689342, duration: Some(2088.019591836735) }
+[ 183.337] ui: event Position { position: 46.214512471655325, duration: Some(2088.019591836735) }
+[ 184.388] ui: event Position { position: 47.239274376417235, duration: Some(2088.019591836735) }
+[ 185.154] ui: event Position { position: 48.014104308390024, duration: Some(2088.019591836735) }
+[ 186.158] ui: event Position { position: 49.01387755102041, duration: Some(2088.019591836735) }
+[ 187.170] ui: event Position { position: 50.03863945578232, duration: Some(2088.019591836735) }
+[ 188.220] ui: event Position { position: 51.06340136054422, duration: Some(2088.019591836735) }
+[ 189.225] ui: event Position { position: 52.08818594104308, duration: Some(2088.019591836735) }
+[ 190.238] ui: event Position { position: 53.11294784580499, duration: Some(2088.019591836735) }
+[ 191.257] ui: event Position { position: 54.11272108843538, duration: Some(2088.019591836735) }
+[ 192.283] ui: event Position { position: 55.13748299319728, duration: Some(2088.019591836735) }
+[ 193.300] ui: event Position { position: 56.162244897959184, duration: Some(2088.019591836735) }
+[ 194.304] ui: event Position { position: 57.18702947845805, duration: Some(2088.019591836735) }
+[ 195.324] ui: event Position { position: 58.21179138321995, duration: Some(2088.019591836735) }
+[ 196.372] ui: event Position { position: 59.21156462585034, duration: Some(2088.019591836735) }
+[ 197.381] ui: event Position { position: 60.236326530612246, duration: Some(2088.019591836735) }
+[ 198.149] ui: event Position { position: 61.011156462585035, duration: Some(2088.019591836735) }
+[ 198.302] window: 480×360 is below the minimum, enlarging
+[ 199.163] ui: event Position { position: 62.03591836734694, duration: Some(2088.019591836735) }
+[ 200.185] ui: event Position { position: 63.03569160997732, duration: Some(2088.019591836735) }
+[ 201.196] ui: event Position { position: 64.06045351473922, duration: Some(2088.019591836735) }
