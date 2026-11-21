@@ -1387,19 +1387,31 @@ impl App {
             return self.show_backdrop(Some(local));
         }
         match self.library.artist_image(artist) {
-            Ok(Some(path)) => return self.show_backdrop(path),
+            Ok(Some(Some(path))) => {
+                // Photos from before 0.5.17 sit in the covers folder under a
+                // hashed name: move them to the artists folder.
+                let path = match scanner::move_artist_photo(&path, &self.paths.artists, artist) {
+                    Some(moved) => {
+                        let _ = self.library.set_artist_image(artist, Some(&moved));
+                        moved
+                    }
+                    None => path,
+                };
+                return self.show_backdrop(Some(path));
+            }
+            Ok(Some(None)) => return self.show_backdrop(None),
             Ok(None) => self.show_backdrop(None),
             Err(_) => return self.show_backdrop(None),
         }
         if !self.settings.download_art || artist == "Unknown Artist" || !self.artist_image_pending.insert(artist.to_string()) {
             return;
         }
-        let (artist, db, covers, tx) =
-            (artist.to_string(), self.paths.database.clone(), self.paths.covers.clone(), self.bg_tx.clone());
+        let (artist, db, artists, tx) =
+            (artist.to_string(), self.paths.database.clone(), self.paths.artists.clone(), self.bg_tx.clone());
         thread::spawn(move || {
             let result = (|| -> anyhow::Result<Option<PathBuf>> {
                 let data = ArtFetcher::new().find_artist_image(&artist)?;
-                let path = data.and_then(|d| scanner::save_cover(&d, &covers, &format!("artist\u{1f}{artist}")));
+                let path = data.and_then(|d| scanner::save_artist_photo(&d, &artists, &artist));
                 Library::open(&db)?.set_artist_image(&artist, path.as_deref())?;
                 Ok(path)
             })();
@@ -1503,6 +1515,7 @@ impl App {
         let item = self.album_item(&album);
         let total: u64 = self.album_tracks.iter().map(|t| t.duration_ms).sum();
         let info = format!("{} • {}", plural(self.album_tracks.len(), "song", "songs"), long_duration(total));
+        let genre = unitn_core::model::album_genre(&self.album_tracks);
         let tracks: Vec<TrackItem> = self
             .album_tracks
             .iter()
@@ -1514,6 +1527,7 @@ impl App {
             .collect();
         if let Some(ui) = self.ui() {
             ui.set_album(item);
+            ui.set_album_genre(genre.into());
             ui.set_album_info(info.into());
             ui.set_album_tracks(model(tracks));
         }

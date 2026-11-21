@@ -9,6 +9,8 @@ pub struct Paths {
     pub log: PathBuf,
     pub database: PathBuf,
     pub covers: PathBuf,
+    /// Downloaded artist photos, named after the artist.
+    pub artists: PathBuf,
     pub settings: PathBuf,
 }
 
@@ -24,6 +26,7 @@ impl Paths {
             log: data.join("unitn.log"),
             database: data.join("library.sqlite3"),
             covers: data.join("covers"),
+            artists: data.join("artists"),
             settings: config.join("settings.json"),
         })
     }

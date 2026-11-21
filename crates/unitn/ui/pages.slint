@@ -300,6 +300,8 @@ export component TrackRow inherits Rectangle {
 export component AlbumDetailPage inherits Rectangle {
     in property <AlbumItem> album;
     in property <string> info;
+    /// The album's genre(s), from its songs' tags ("" = unknown).
+    in property <string> genre;
     in property <[TrackItem]> tracks;
     in property <string> current-key;
     callback play(bool);
@@ -347,7 +349,9 @@ export component AlbumDetailPage inherits Rectangle {
                     overflow: elide;
                 }
                 Text {
-                    text: root.album.year == "" ? root.album.artist : root.album.artist + " • " + root.album.year;
+                    text: root.album.artist
+                        + (root.album.year == "" ? "" : " • " + root.album.year)
+                        + (root.genre == "" ? "" : " • " + root.genre);
                     color: Theme.fg;
                     font-size: 15px;
                     overflow: elide;

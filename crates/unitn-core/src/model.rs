@@ -126,3 +126,39 @@ impl Station {
         parts.join(" • ")
     }
 }
+
+/// The genre of an album, from its songs' genre tags: the most common one,
+/// or the two most common joined with " / " when the album mixes genres.
+/// Tags holding several genres ("Rock; Pop", "Rock\0Pop") count each one.
+pub fn album_genre(tracks: &[Track]) -> String {
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for t in tracks {
+        for g in t.genre.split([';', '\0']).map(str::trim).filter(|g| !g.is_empty()) {
+            match counts.iter_mut().find(|(name, _)| name.eq_ignore_ascii_case(g)) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((g.to_string(), 1)),
+            }
+        }
+    }
+    // Stable sort: ties keep the order of first appearance.
+    counts.sort_by(|a, b| b.1.cmp(&a.1));
+    counts.into_iter().take(2).map(|(g, _)| g).collect::<Vec<_>>().join(" / ")
+}
+
+#[cfg(test)]
+mod album_genre_tests {
+    use super::*;
+
+    fn song(genre: &str) -> Track {
+        Track { genre: genre.to_string(), ..Default::default() }
+    }
+
+    #[test]
+    fn picks_the_albums_genres() {
+        assert_eq!(album_genre(&[]), "");
+        assert_eq!(album_genre(&[song(""), song("")]), "");
+        assert_eq!(album_genre(&[song("Rock"), song("rock"), song("")]), "Rock");
+        assert_eq!(album_genre(&[song("Jazz"), song("Soul"), song("Soul"), song("Funk")]), "Soul / Jazz");
+        assert_eq!(album_genre(&[song("Rock; Pop"), song("Pop")]), "Pop / Rock");
+    }
+}
