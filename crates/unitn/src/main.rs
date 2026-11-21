@@ -181,7 +181,7 @@ fn run() -> Result<()> {
                             // Remember the size for the next start (not the
                             // full-screen visualizer's).
                             let window = ui.window();
-                            if !window.is_fullscreen() && !window.is_minimized() {
+                            if !window.is_fullscreen() && !window.is_minimized() && !ui.get_mini_player() {
                                 let size = window.size().to_logical(window.scale_factor());
                                 if let Ok(mut app) = app.try_borrow_mut() {
                                     app.remember_window(size.width, size.height, window.is_maximized());
@@ -284,18 +284,32 @@ fn run() -> Result<()> {
 /// platform picked up the Slint value.
 const MIN_WINDOW: (f64, f64) = (960.0, 620.0);
 
-fn keep_min_size(ui: &AppWindow) {
+/// Mini player window: its height (plus the macOS title bar), and the
+/// narrowest and widest it may be made.
+pub(crate) const MINI_HEIGHT: f64 = 132.0;
+pub(crate) const MINI_WIDTH: (f64, f64) = (340.0, 720.0);
+
+pub(crate) fn keep_min_size(ui: &AppWindow) {
     use slint::winit_030::winit::dpi::LogicalSize;
     use slint::winit_030::WinitWindowAccessor;
+    // The mini player has a fixed height and a narrow width range.
+    let mini = ui.get_mini_player();
+    let mini_h = MINI_HEIGHT + ui.get_titlebar_inset() as f64;
+    let (min, max) = if mini {
+        ((MINI_WIDTH.0, mini_h), Some(LogicalSize::new(MINI_WIDTH.1, mini_h)))
+    } else {
+        (MIN_WINDOW, None)
+    };
     ui.window().with_winit_window(|w| {
-        w.set_min_inner_size(Some(LogicalSize::new(MIN_WINDOW.0, MIN_WINDOW.1)));
+        w.set_min_inner_size(Some(LogicalSize::new(min.0, min.1)));
+        w.set_max_inner_size(max);
         if w.fullscreen().is_some() {
             return;
         }
         let size = w.inner_size().to_logical::<f64>(w.scale_factor());
-        if size.width < MIN_WINDOW.0 - 1.0 || size.height < MIN_WINDOW.1 - 1.0 {
+        if size.width < min.0 - 1.0 || size.height < min.1 - 1.0 {
             unitn_core::log::log(format!("window: {:.0}×{:.0} is below the minimum, enlarging", size.width, size.height));
-            let _ = w.request_inner_size(LogicalSize::new(size.width.max(MIN_WINDOW.0), size.height.max(MIN_WINDOW.1)));
+            let _ = w.request_inner_size(LogicalSize::new(size.width.max(min.0), size.height.max(min.1)));
         }
     });
 }

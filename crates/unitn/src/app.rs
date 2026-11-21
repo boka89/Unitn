@@ -382,6 +382,8 @@ pub struct App {
     playlist_tracks: Vec<Track>,
     /// (context, index) of the song menu that is open.
     menu_target: (i32, i32),
+    /// Size and maximized state of the full window while the mini player is shown.
+    full_window: Option<(f32, f32, bool)>,
     /// Queue index the engine was told to play next (gapless).
     planned_next: Option<usize>,
     eq_gains_model: Rc<VecModel<f32>>,
@@ -496,6 +498,7 @@ impl App {
             current_playlist: None,
             playlist_tracks: Vec::new(),
             menu_target: (0, -1),
+            full_window: None,
             planned_next: None,
             eq_gains_model: Rc::new(VecModel::from(vec![0.0f32; 10])),
             eq_aspect: 1.5,
@@ -585,6 +588,34 @@ impl App {
         if !maximized {
             self.settings.window_width = Some(width);
             self.settings.window_height = Some(height);
+        }
+    }
+
+    /// Switches between the full window and the mini player.
+    pub fn toggle_mini_player(&mut self) {
+        let Some(ui) = self.ui() else { return };
+        let window = ui.window();
+        if !ui.get_mini_player() {
+            if ui.get_viz_fullscreen() {
+                ui.set_viz_fullscreen(false);
+            }
+            let size = window.size().to_logical(window.scale_factor());
+            self.full_window = Some((size.width, size.height, window.is_maximized()));
+            window.set_maximized(false);
+            ui.set_mini_player(true);
+            crate::keep_min_size(&ui);
+            let height = crate::MINI_HEIGHT as f32 + ui.get_titlebar_inset();
+            window.set_size(slint::LogicalSize::new(380.0, height));
+            log("window: mini player");
+        } else {
+            ui.set_mini_player(false);
+            crate::keep_min_size(&ui);
+            let (w, h, maximized) = self.full_window.take().unwrap_or((1280.0, 820.0, false));
+            window.set_size(slint::LogicalSize::new(w, h));
+            if maximized {
+                window.set_maximized(true);
+            }
+            log("window: full player");
         }
     }
 
@@ -3806,6 +3837,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_play_playlist_track, |a, i| a.play_playlist_track(i.max(0) as usize));
     on!(on_save_queue_as_playlist, |a| a.save_queue_as_playlist());
     on!(on_toggle_like, |a| a.toggle_like());
+    on!(on_toggle_mini_player, |a| a.toggle_mini_player());
     on!(on_track_menu_requested, |a, c, i| a.track_menu_requested(c, i));
     on!(on_track_menu_action, |a, action, pl| a.track_menu_action(action, pl));
     on!(on_open_server, |a, i| a.open_server(i.max(0) as usize));
