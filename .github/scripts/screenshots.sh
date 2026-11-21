@@ -24,7 +24,7 @@ make_album() { # artist album year color tracks...
       -filter_complex "[0:a][1:a]amix=inputs=2:normalize=0[a]" \
       -map "[a]" -map 2:v -c:a libmp3lame -q:a 6 -c:v copy -id3v2_version 3 \
       -metadata title="$title" -metadata artist="$artist" -metadata album="$album" \
-      -metadata date="$year" -metadata track="$n" -disposition:v attached_pic "$dir/$(printf %02d $n) $title.mp3"
+      -metadata genre="Ambient" -metadata date="$year" -metadata track="$n" -disposition:v attached_pic "$dir/$(printf %02d $n) $title.mp3"
     n=$((n + 1))
   done
 }
