@@ -1445,16 +1445,23 @@ export component AppWindow inherits Window {
                             horizontal-scrollbar-policy: always-off;
                             for c[i] in root.fix-candidates: Rectangle {
                                 height: 60px;
-                                background: i == root.fix-selected ? Theme.accent-soft
-                                    : row-touch.has-hover ? Theme.surface-hover
-                                    : Math.mod(i, 2) == 1 ? (Theme.dark ? #ffffff0a : #0000000a) : transparent;
+                                // Highlight, kept clear of the scrollbar lane.
+                                Rectangle {
+                                    x: 0px;
+                                    width: parent.width - Theme.scroll-gutter;
+                                    height: parent.height;
+                                    border-radius: 0px;
+                                    background: i == root.fix-selected ? Theme.accent-soft
+                                        : row-touch.has-hover ? Theme.surface-hover
+                                        : Math.mod(i, 2) == 1 ? (Theme.dark ? #ffffff0a : #0000000a) : transparent;
+                                }
                                 row-touch := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => { root.fix-select(i); }
                                 }
                                 HorizontalLayout {
                                     padding-left: 10px;
-                                    padding-right: 10px;
+                                    padding-right: 10px + Theme.scroll-gutter;
                                     spacing: 12px;
                                     VerticalLayout {
                                         alignment: center;

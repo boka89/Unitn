@@ -188,11 +188,17 @@ export component TrackRow inherits Rectangle {
     callback menu(length, length);
 
     height: Theme.compact ? 30px : 46px;
-    border-radius: Theme.compact ? 4px : 6px;
-    background: root.current ? Theme.accent-soft
-        : touch.has-hover ? Theme.surface-hover
-        : root.striped ? (Theme.dark ? #ffffff0a : #0000000a)
-        : transparent;
+    // Highlight, kept clear of the scrollbar lane.
+    Rectangle {
+        x: 0px;
+        width: parent.width - Theme.scroll-gutter;
+        height: parent.height;
+        border-radius: Theme.compact ? 4px : 6px;
+        background: root.current ? Theme.accent-soft
+            : touch.has-hover ? Theme.surface-hover
+            : root.striped ? (Theme.dark ? #ffffff0a : #0000000a)
+            : transparent;
+    }
 
     DragSource {
         enabled: root.drag-what != "";
@@ -205,7 +211,7 @@ export component TrackRow inherits Rectangle {
 
     HorizontalLayout {
         padding-left: 12px;
-        padding-right: 20px;
+        padding-right: 12px + Theme.scroll-gutter;
         spacing: 16px;
         Rectangle {
             width: 28px;
@@ -413,8 +419,14 @@ export component ArtistsPage inherits Rectangle {
         height: parent.height;
         for artist[i] in root.artists: Rectangle {
             height: 60px;
-            border-radius: 8px;
-            background: touch.has-hover ? Theme.surface : transparent;
+            // Highlight, kept clear of the scrollbar lane.
+            Rectangle {
+                x: 0px;
+                width: parent.width - Theme.scroll-gutter;
+                height: parent.height;
+                border-radius: 8px;
+                background: touch.has-hover ? Theme.surface : transparent;
+            }
             DragSource {
                 what: "artist:" + i;
                 kind: "artist";
@@ -425,7 +437,7 @@ export component ArtistsPage inherits Rectangle {
             }
             HorizontalLayout {
                 padding-left: 20px;
-                padding-right: 20px;
+                padding-right: 20px + Theme.scroll-gutter;
                 spacing: 14px;
                 VerticalLayout {
                     alignment: center;
@@ -561,15 +573,21 @@ export component RadioPage inherits Rectangle {
                 for station[i] in root.stations: row := Rectangle {
                     property <bool> current: station.key == root.current-key;
                     height: 60px;
-                    border-radius: 8px;
-                    background: row.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
+                    // Highlight, kept clear of the scrollbar lane.
+                    Rectangle {
+                        x: 0px;
+                        width: parent.width - Theme.scroll-gutter;
+                        height: parent.height;
+                        border-radius: 8px;
+                        background: row.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
+                    }
                     touch := TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.play-station(i); }
                     }
                     HorizontalLayout {
                         padding-left: 12px;
-                        padding-right: 12px;
+                        padding-right: 12px + Theme.scroll-gutter;
                         spacing: 14px;
                         VerticalLayout {
                             alignment: center;
@@ -676,9 +694,15 @@ export component QueuePage inherits Rectangle {
             vertical-stretch: 1;
             for entry[i] in root.queue: Rectangle {
                 height: 52px;
-                border-radius: 8px;
                 opacity: root.drag-from == i ? 0.45 : 1.0;
-                background: entry.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
+                // Highlight, kept clear of the scrollbar lane.
+                Rectangle {
+                    x: 0px;
+                    width: parent.width - Theme.scroll-gutter;
+                    height: parent.height;
+                    border-radius: 8px;
+                    background: entry.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
+                }
                 touch := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { root.play-index(i); }
@@ -687,14 +711,14 @@ export component QueuePage inherits Rectangle {
                 if root.drag-from >= 0 && root.drop-target == i && i != root.drag-from: Rectangle {
                     x: 0px;
                     y: i < root.drag-from ? 0px : parent.height - 3px;
-                    width: parent.width;
+                    width: parent.width - Theme.scroll-gutter;
                     height: 3px;
                     border-radius: 2px;
                     background: Theme.accent;
                 }
                 HorizontalLayout {
                     padding-left: 4px;
-                    padding-right: 8px;
+                    padding-right: 8px + Theme.scroll-gutter;
                     spacing: 10px;
                     // Drag handle.
                     Rectangle {
@@ -1668,8 +1692,14 @@ component PodcastRow inherits Rectangle {
     callback toggle-favorite();
 
     height: 72px;
-    border-radius: 8px;
-    background: touch.has-hover ? Theme.surface : transparent;
+    // Highlight, kept clear of the scrollbar lane.
+    Rectangle {
+        x: 0px;
+        width: parent.width - Theme.scroll-gutter;
+        height: parent.height;
+        border-radius: 8px;
+        background: touch.has-hover ? Theme.surface : transparent;
+    }
     DragSource {
         enabled: root.drag-what != "";
         what: root.drag-what;
@@ -1681,7 +1711,7 @@ component PodcastRow inherits Rectangle {
     }
     HorizontalLayout {
         padding-left: 12px;
-        padding-right: 12px;
+        padding-right: 12px + Theme.scroll-gutter;
         spacing: 14px;
         VerticalLayout {
             alignment: center;
@@ -1909,8 +1939,14 @@ export component PodcastsPage inherits Rectangle {
                 for ep[i] in root.episodes: row := Rectangle {
                     property <bool> current: ep.key == root.current-key;
                     height: 58px;
-                    border-radius: 8px;
-                    background: row.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
+                    // Highlight, kept clear of the scrollbar lane.
+                    Rectangle {
+                        x: 0px;
+                        width: parent.width - Theme.scroll-gutter;
+                        height: parent.height;
+                        border-radius: 8px;
+                        background: row.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
+                    }
                     DragSource {
                         what: "episode:" + i;
                         kind: "podcast";
@@ -1921,7 +1957,7 @@ export component PodcastsPage inherits Rectangle {
                     }
                     HorizontalLayout {
                         padding-left: 12px;
-                        padding-right: 12px;
+                        padding-right: 12px + Theme.scroll-gutter;
                         spacing: 12px;
                         VerticalLayout {
                             alignment: center;
