@@ -8,7 +8,7 @@ no account and no tracking.
 
 **Website and downloads: [unitn.bokors.net](https://unitn.bokors.net)**
 
-> Status: v0.5.15 — young but usable. Feedback and contributions welcome.
+> Status: v0.5.16 — young but usable. Feedback and contributions welcome.
 
 ![Unitn playing an album, dark theme](docs/screenshots/dark-playing.png)
 
@@ -29,7 +29,8 @@ no account and no tracking.
 - **Albums, Artists and Songs** views with instant search, Apple-style striped track lists,
   Comfy and Cozy list density, and a play marker on the current song
 - **Album art**: missing covers are downloaded from the free MusicBrainz / Cover Art Archive,
-  and artist photos (from Wikimedia Commons) appear behind Now Playing
+  and artist photos appear behind Now Playing: your own `artist.jpg` (`.png`, `.webp`) from the
+  artist or album folder if you have one, otherwise a photo from Wikimedia Commons
 - **Fix album info**: search MusicBrainz by hand, pick the right album and cover (or use your
   own image) and correct artist/album names. Your music files are never modified
 - **Music servers**: Jellyfin, Plex, Navidrome and other OpenSubsonic servers. Browse your
@@ -39,8 +40,9 @@ no account and no tracking.
 - **Podcasts**: search Apple's public podcast directory or paste any RSS link, subscribe, and
   play episodes. Unitn remembers where you stopped in each episode and shows what's new
 - **Lyrics** on Now Playing: synced lyrics scroll along with the song and highlight the current
-  line. They come from a `.lrc` file next to the song, from the song's own tags, or online from
-  the free [LRCLIB](https://lrclib.net) (can be turned off)
+  line. They come from a `.lrc` or `.txt` file named like the song (next to it, or in a `Lyrics`
+  subfolder of the album folder), from the song's own tags, or online from the free
+  [LRCLIB](https://lrclib.net) (can be turned off)
 - **Internet radio** with ~50,000 stations from the open [Radio Browser](https://www.radio-browser.info),
   Popular / Favorites / Hungary tabs and your own stream URLs
 - **Playlists**: create, rename, reorder, import/export M3U, and save the queue as a playlist;
@@ -53,7 +55,9 @@ no account and no tracking.
   tuned for both themes; the ‹ › buttons (or ← →) switch styles and a button goes full screen. The
   buttons appear when you move the mouse and fade out when it rests
 - **Drag & drop** files, folders and M3U playlists onto the window
-- **Keyboard shortcuts** (Space, ←/→ seek, ⌘/Ctrl+←/→ track, ↑/↓ volume, ⌘/Ctrl+F search …)
+- **Volume** with a mute button (click the speaker, or press M) and mouse-wheel control over the
+  volume bar
+- **Keyboard shortcuts** (Space, ←/→ seek, ⌘/Ctrl+←/→ track, ↑/↓ volume, M mute, ⌘/Ctrl+F search …)
 - **Dark and light themes**, or follow the system setting; adjustable window transparency and,
   on macOS, a frosted-glass (blurred) window background
 - **Media keys and OS integration**: macOS Now Playing, Windows media overlay, Linux MPRIS
@@ -98,7 +102,29 @@ Good to know:
   Plex's Settings → Authorized Devices.
 - HTTPS works with properly signed certificates; for self-signed certificates use the server's
   `http://` LAN address.
-- Server songs can't be added to playlists yet.
+
+## Lyrics and artist photos in your music folders
+
+Unitn picks up files you keep with your music; nothing has to be imported:
+
+```
+Music/
+  Artist/
+    artist.jpg            ← artist photo behind Now Playing (.jpg, .jpeg, .png or .webp)
+    Album/
+      cover.jpg           ← album cover (also folder.jpg, front.jpg …, or embedded in the files)
+      01 Song.flac
+      01 Song.lrc         ← lyrics next to the song …
+      Lyrics/             ← … or all of the album's lyrics in a "Lyrics" (or "lyrics") subfolder
+        02 Other song.lrc
+        03 Third song.txt
+```
+
+- A lyrics file has the same name as the song file. `.lrc` (synced, the current line is
+  highlighted) is used before `.txt` (plain text), and a file next to the song before one in
+  the `Lyrics` folder. UTF-8, UTF-16 and older Windows-1252 text files all work.
+- `artist.jpg` may be in the album folder or the artist folder above it. When it's there, Unitn
+  uses it and doesn't download a photo.
 
 ## Making a release
 
