@@ -2,6 +2,21 @@
 
 Older versions: see the [changelog on the website](https://unitn.bokors.net/changelog/).
 
+## 0.6.1 — 2026-11-21
+
+Two features asked for by **@jo-el414** (#19, #21). Thanks!
+
+### New
+
+- **Mini player**: the new button on the player bar (or **⌘/Ctrl+Shift+M**) shrinks Unitn to a
+  small window with the cover, song, previous / play / next, like, seek bar and volume (mute
+  and mouse wheel work there too). It stays on top of other windows; the pin button turns that
+  off. The expand button, a double-click on the cover or the shortcut bring the full window back
+  at its previous size. (#19)
+- **Reorder playlist songs**: drag the handle at the start of a song to move it, like in the
+  Queue. For long playlists the song menu has **Move to top** and **Move to bottom**. Works for
+  every playlist, also with songs from servers and podcast episodes. (#21)
+
 ## 0.5.17 — 2026-11-21
 
 More from **@jo-el414**: thanks for testing 0.5.16 and the new ideas (#14, #16, #19, #20).

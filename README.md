@@ -8,7 +8,7 @@ no account and no tracking.
 
 **Website and downloads: [unitn.bokors.net](https://unitn.bokors.net)**
 
-> Status: v0.5.17 — young but usable. Feedback and contributions welcome.
+> Status: v0.6.1 — young but usable. Feedback and contributions welcome.
 
 ![Unitn playing an album, dark theme](docs/screenshots/dark-playing.png)
 
@@ -45,8 +45,9 @@ no account and no tracking.
   [LRCLIB](https://lrclib.net) (can be turned off)
 - **Internet radio** with ~50,000 stations from the open [Radio Browser](https://www.radio-browser.info),
   Popular / Favorites / Hungary tabs and your own stream URLs
-- **Playlists**: create, rename, reorder, import/export M3U, and save the queue as a playlist;
-  local songs and songs from your servers can be mixed
+- **Playlists**: create, rename, reorder songs (drag the handle, or "Move to top / bottom" in
+  the song menu), import/export M3U, and save the queue as a playlist; local songs and songs from
+  your servers can be mixed
 - **Queue** with drag-to-reorder, shuffle, repeat all / repeat one
 - **Gapless playback** and **crossfade** (2–12 s; optionally keep songs of the same album gapless), and
   whole-file preloading so music from network shares doesn't stutter
@@ -57,7 +58,11 @@ no account and no tracking.
 - **Drag & drop** files, folders and M3U playlists onto the window
 - **Volume** with a mute button (click the speaker, or press M) and mouse-wheel control over the
   volume bar
-- **Keyboard shortcuts** (Space, ←/→ seek, ⌘/Ctrl+←/→ track, ↑/↓ volume, M mute, ⌘/Ctrl+F search …)
+- **Mini player**: a small window with the cover, song, play controls, like, seek bar and volume
+  that stays on top of other windows (can be unpinned). Open it with the button on the player
+  bar or ⌘/Ctrl+Shift+M; the expand button or a double-click on the cover brings the full window back
+- **Keyboard shortcuts** (Space, ←/→ seek, ⌘/Ctrl+←/→ track, ↑/↓ volume, M mute, ⌘/Ctrl+F search,
+  ⌘/Ctrl+Shift+M mini player …)
 - **Dark and light themes**, or follow the system setting; adjustable window transparency and,
   on macOS, a frosted-glass (blurred) window background
 - **Media keys and OS integration**: macOS Now Playing, Windows media overlay, Linux MPRIS

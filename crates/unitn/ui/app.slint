@@ -1106,7 +1106,6 @@ export component AppWindow inherits Window {
                                 clicked => { root.toggle-mini-player(); }
                             }
                         }
-                        Rectangle { width: 4px; }
                         // Volume: click the speaker to mute / unmute; the mouse
                         // wheel over the speaker or the bar changes the volume.
                         volume-box := Rectangle {
@@ -1144,8 +1143,9 @@ export component AppWindow inherits Window {
                                 }
                                 VerticalLayout {
                                     alignment: center;
+                                    // 300px for spectrum, mini player button and volume.
                                     SeekBar {
-                                        width: 120px;
+                                        width: 110px;
                                         value: root.volume;
                                         changed(v) => { root.set-volume(v); }
                                     }
