@@ -19,9 +19,11 @@ Thanks to **@jo-el414** for the bug reports and ideas (#14–#17).
 - **Your own artist photos**: an `artist.jpg` (or `.jpeg`, `.png`, `.webp`) in the album folder
   or the artist folder above it is shown behind Now Playing instead of a downloaded photo, and
   nothing is downloaded for that artist. (#16)
-- **Drag and drop** songs and albums onto playlists in the sidebar and onto the queue.
-- **Like** button on the player bar, always shown, level with the play controls.
-- **macOS Intel** build (`…_x64.dmg`) next to the Apple Silicon one.
+- **Drag and drop** onto a playlist or the Queue in the sidebar: songs, albums, artists, podcast
+  shows and episodes. Drop on the playlists "+" to make a new playlist from them. Podcast
+  episodes can now be in playlists.
+- **Like** button (heart) on the player bar, level with the play controls; greyed out when
+  nothing likeable is playing.
 
 ### Fixed
 
@@ -29,7 +31,8 @@ Thanks to **@jo-el414** for the bug reports and ideas (#14–#17).
   Songs lists (seen at 125 % / 150 % display scaling). Lists now only scroll vertically, and
   the album grid leaves room for the vertical scrollbar. (#14)
 - Lyrics: lines scrolling past the top of the lyrics panel no longer run over its border. (#14)
-- Faster startup with big libraries: album covers load in the background, with a notice while
-  server libraries sync.
+- Faster startup with big libraries: album covers are shrunk and loaded in the background
+  instead of holding up the window, and a "Syncing library…" pill shows while the folder scan
+  runs.
 - A library scan no longer blocks likes and playlist changes ("database is locked").
 - The sidebar no longer has a separate "Now Playing" entry.
