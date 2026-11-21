@@ -9,6 +9,7 @@ fn main() {
 fn windows_icon() {
     use std::path::PathBuf;
     println!("cargo:rerun-if-changed=icons/icon.ico");
+    println!("cargo:rerun-if-env-changed=CARGO_PKG_VERSION");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows")
         || std::env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc")
     {
@@ -23,7 +24,43 @@ fn windows_icon() {
     let script = out.join("unitn.rc");
     let res = out.join("unitn.res");
     let ico = ico.to_string_lossy().replace('\\', "\\\\");
-    std::fs::write(&script, format!("1 ICON \"{ico}\"\n")).unwrap();
+    // Version info: Windows shows FileDescription as the app's name, e.g. in
+    // the media overlay (volume keys) and Task Manager.
+    let version = std::env::var("CARGO_PKG_VERSION").unwrap();
+    let mut parts: Vec<u32> = version.split(['.', '-']).filter_map(|p| p.parse().ok()).take(3).collect();
+    parts.resize(4, 0);
+    let numeric = parts.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(",");
+    std::fs::write(
+        &script,
+        format!(
+            "1 ICON \"{ico}\"\n\
+             1 VERSIONINFO\n\
+             FILEVERSION {numeric}\n\
+             PRODUCTVERSION {numeric}\n\
+             FILEOS 0x40004\n\
+             FILETYPE 0x1\n\
+             BEGIN\n\
+             BLOCK \"StringFileInfo\"\n\
+             BEGIN\n\
+             BLOCK \"040904B0\"\n\
+             BEGIN\n\
+             VALUE \"CompanyName\", \"bokors\"\n\
+             VALUE \"FileDescription\", \"Unitn\"\n\
+             VALUE \"FileVersion\", \"{version}\"\n\
+             VALUE \"InternalName\", \"unitn\"\n\
+             VALUE \"OriginalFilename\", \"unitn.exe\"\n\
+             VALUE \"ProductName\", \"Unitn\"\n\
+             VALUE \"ProductVersion\", \"{version}\"\n\
+             END\n\
+             END\n\
+             BLOCK \"VarFileInfo\"\n\
+             BEGIN\n\
+             VALUE \"Translation\", 0x409, 1200\n\
+             END\n\
+             END\n"
+        ),
+    )
+    .unwrap();
     let status = std::process::Command::new(&rc)
         .arg("/nologo")
         .arg("/fo")

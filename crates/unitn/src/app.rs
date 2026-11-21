@@ -3156,7 +3156,7 @@ impl App {
                     album_key(t.grouping_artist(), &t.album)
                 };
                 ui.set_playing_album(album.into());
-                self.media.set_metadata(&t.title, &t.artist, &t.album, self.duration);
+                self.media.set_metadata(&t.title, &t.artist, &t.album, t.cover.as_deref(), self.duration);
                 let song = (!t.is_remote()).then(|| t.path.clone());
                 self.update_backdrop(t.grouping_artist(), song.as_deref());
             }
@@ -3175,7 +3175,7 @@ impl App {
                 ui.set_has_track(true);
                 ui.set_current_key(station_key(&s).into());
                 ui.set_playing_album(SharedString::new());
-                self.media.set_metadata(&title, &s.name, "", None);
+                self.media.set_metadata(&title, &s.name, "", None, None);
                 self.show_backdrop(None);
             }
             None => {
