@@ -44,6 +44,10 @@ const RADIO_TAB_OTHER: i32 = -1;
 /// Results of background work, delivered to the UI thread.
 enum Bg {
     ScanProgress(usize),
+    /// Artist photos found (in music folders, already downloaded, or just
+    /// downloaded) for the Artists page: (artist, image file).
+    ArtistPhotos(Vec<(String, PathBuf)>),
+    ArtistPhotosDone,
     /// Album covers made small enough for lists, decoded off the UI thread.
     Thumbs(Vec<(PathBuf, Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>)>),
     /// The cover thread finished its list.
@@ -371,6 +375,10 @@ pub struct App {
 
     last_viz_style: i32,
     artist_image_pending: HashSet<String>,
+    /// Photo of each artist for the Artists page (artist.jpg or downloaded).
+    artist_photos: HashMap<String, PathBuf>,
+    /// The Artists page's photo finder thread is running.
+    artist_photos_running: bool,
     /// Small album covers for the album grid and album page.
     thumbs: HashMap<PathBuf, Option<Image>>,
     /// Covers waiting for the cover thread, and whether it runs.
@@ -491,6 +499,8 @@ impl App {
             viz_idle: false,
             last_viz_style: -1,
             artist_image_pending: HashSet::new(),
+            artist_photos: HashMap::new(),
+            artist_photos_running: false,
             thumbs: HashMap::new(),
             thumb_queue: Vec::new(),
             thumb_queued: HashSet::new(),
@@ -935,6 +945,8 @@ impl App {
     fn on_background(&mut self, job: Bg) {
         match job {
             Bg::Thumbs(done) => self.on_thumbs(done),
+            Bg::ArtistPhotos(photos) => self.on_artist_photos(photos),
+            Bg::ArtistPhotosDone => self.artist_photos_running = false,
             Bg::ThumbsDone => {
                 self.thumbs_loading = false;
                 self.load_thumbs();
@@ -984,6 +996,9 @@ impl App {
             }
             Bg::ArtistImage { artist, path } => {
                 self.artist_image_pending.remove(&artist);
+                if let Some(p) = &path {
+                    self.on_artist_photos(vec![(artist.clone(), p.clone())]);
+                }
                 // A local artist.jpg, if the song has one, stays in front of
                 // a downloaded photo.
                 let current = match self.current_item() {
@@ -1215,6 +1230,15 @@ impl App {
                 model.set_row_data(i, row);
             }
         }
+        let artists = ui.get_artists();
+        for i in 0..self.artists.len() {
+            let Some(path) = self.artist_picture(&self.artists[i]).filter(|p| ready.contains(p)) else { continue };
+            if let (Some(mut row), Some(Some(img))) = (artists.row_data(i), self.thumbs.get(&path)) {
+                row.image = img.clone();
+                row.has_image = true;
+                artists.set_row_data(i, row);
+            }
+        }
         if let Some(path) = self.open_album.as_ref().and_then(|a| a.cover.clone()).filter(|p| ready.contains(p)) {
             if let Some(Some(img)) = self.thumbs.get(&path) {
                 let mut item = ui.get_album();
@@ -1276,6 +1300,7 @@ impl App {
             ui.set_albums_title(self.artist_filter.clone().unwrap_or_else(|| "Albums".into()).into());
         }
         self.load_thumbs();
+        self.find_artist_photos();
     }
 
     pub fn start_scan(&mut self) {
@@ -1575,20 +1600,112 @@ impl App {
         unitn_core::sort::sort_songs(&mut self.songs, self.settings.song_sort, self.settings.song_sort_reversed, &added);
     }
 
-    fn artist_items(&self) -> Vec<ArtistItem> {
-        self.artists
-            .iter()
-            .map(|a| ArtistItem {
-                name: a.name.as_str().into(),
-                info: format!(
-                    "{} • {}",
-                    plural(a.album_count as usize, "album", "albums"),
-                    plural(a.track_count as usize, "song", "songs")
-                )
-                .into(),
-                initial: initial(&a.name),
-            })
-            .collect()
+    /// The picture for an artist: their photo, else one of their album covers.
+    fn artist_picture(&self, a: &Artist) -> Option<PathBuf> {
+        self.artist_photos.get(&a.name).cloned().or_else(|| a.cover.clone())
+    }
+
+    fn artist_item(&mut self, a: &Artist) -> ArtistItem {
+        let (image, has_image) = self.thumb(&self.artist_picture(a));
+        ArtistItem {
+            name: a.name.as_str().into(),
+            info: format!(
+                "{} • {}",
+                plural(a.album_count as usize, "album", "albums"),
+                plural(a.track_count as usize, "song", "songs")
+            )
+            .into(),
+            initial: initial(&a.name),
+            image,
+            has_image,
+        }
+    }
+
+    fn artist_items(&mut self) -> Vec<ArtistItem> {
+        let artists = self.artists.clone();
+        artists.iter().map(|a| self.artist_item(a)).collect()
+    }
+
+    /// Updates one artist on the Artists page (after their photo arrived).
+    fn refresh_artist(&mut self, name: &str) {
+        let Some(i) = self.artists.iter().position(|a| a.name == name) else { return };
+        let artist = self.artists[i].clone();
+        let item = self.artist_item(&artist);
+        if let Some(ui) = self.ui() {
+            let model = ui.get_artists();
+            if i < model.row_count() {
+                model.set_row_data(i, item);
+            }
+        }
+    }
+
+    /// Finds photos for the Artists page in the background: an artist.jpg in
+    /// the music folders, else one downloaded earlier; then, if album art
+    /// downloads are on, downloads the missing ones slowly (the photo
+    /// services ask for no more than about one request a second).
+    fn find_artist_photos(&mut self) {
+        if self.artist_photos_running || self.artists.is_empty() {
+            return;
+        }
+        self.artist_photos_running = true;
+        let artists: Vec<(String, Option<PathBuf>)> =
+            self.artists.iter().filter(|a| !self.artist_photos.contains_key(&a.name)).map(|a| (a.name.clone(), a.sample.clone())).collect();
+        let pending = self.artist_image_pending.clone();
+        let (db, dir, tx, download) =
+            (self.paths.database.clone(), self.paths.artists.clone(), self.bg_tx.clone(), self.settings.download_art);
+        thread::spawn(move || {
+            let Ok(library) = Library::open(&db) else {
+                let _ = tx.send(Bg::ArtistPhotosDone);
+                return;
+            };
+            let mut found = Vec::new();
+            let mut missing = Vec::new();
+            for (name, sample) in artists {
+                if let Some(photo) = sample.as_deref().and_then(scanner::local_artist_image) {
+                    found.push((name, photo));
+                    continue;
+                }
+                match library.artist_image(&name) {
+                    Ok(Some(Some(photo))) if photo.is_file() => found.push((name, photo)),
+                    Ok(Some(_)) => {} // looked up before: there is none
+                    _ => missing.push(name),
+                }
+            }
+            if tx.send(Bg::ArtistPhotos(found)).is_err() {
+                return;
+            }
+            if download {
+                let skip = ["unknown artist", "various artists", "various", "va"];
+                for name in missing.into_iter().filter(|n| !skip.contains(&n.to_lowercase().as_str()) && !pending.contains(n)) {
+                    std::thread::sleep(Duration::from_millis(1500));
+                    let photo = (|| -> anyhow::Result<Option<PathBuf>> {
+                        let data = ArtFetcher::new().find_artist_image(&name)?;
+                        let path = data.and_then(|d| scanner::save_artist_photo(&d, &dir, &name));
+                        library.set_artist_image(&name, path.as_deref())?;
+                        Ok(path)
+                    })();
+                    match photo {
+                        Ok(Some(path)) => {
+                            if tx.send(Bg::ArtistPhotos(vec![(name, path)])).is_err() {
+                                return;
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => log(format!("art: artist photo for {name} failed: {e:#}")),
+                    }
+                }
+            }
+            let _ = tx.send(Bg::ArtistPhotosDone);
+        });
+    }
+
+    fn on_artist_photos(&mut self, photos: Vec<(String, PathBuf)>) {
+        let names: Vec<String> = photos.iter().map(|(n, _)| n.clone()).collect();
+        self.artist_photos.extend(photos);
+        for name in &names {
+            self.refresh_artist(name);
+        }
+        self.load_thumbs();
     }
 
     /// Shows the sort menus' labels and the chosen orders.
@@ -1654,6 +1771,7 @@ impl App {
                 if let Some(ui) = self.ui() {
                     ui.set_artists(model(items));
                 }
+                self.load_thumbs();
             }
             _ => {
                 self.sort_songs();
