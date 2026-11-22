@@ -90,11 +90,12 @@ fn run() -> Result<()> {
     // The window opens at the size and place it had when the app was closed;
     // as the mini player if it was one.
     let start_mini = settings.mini_player;
+    ui.set_mini_lyrics(settings.mini_lyrics);
     let position = if start_mini {
         ui.set_mini_player(true);
         let width = settings.mini_width.filter(|w| w.is_finite()).unwrap_or(MINI_DEFAULT_WIDTH);
         let width = width.clamp(MINI_WIDTH.0 as f32, MINI_WIDTH.1 as f32);
-        ui.window().set_size(slint::LogicalSize::new(width, MINI_HEIGHT as f32 + ui.get_titlebar_inset()));
+        ui.window().set_size(slint::LogicalSize::new(width, mini_height(&ui) as f32));
         settings.mini_x.zip(settings.mini_y)
     } else {
         if let (Some(w), Some(h)) = (settings.window_width, settings.window_height) {
@@ -336,6 +337,13 @@ const MIN_WINDOW: (f64, f64) = (960.0, 620.0);
 pub(crate) const MINI_HEIGHT: f64 = 132.0;
 pub(crate) const MINI_WIDTH: (f64, f64) = (340.0, 720.0);
 pub(crate) const MINI_DEFAULT_WIDTH: f32 = 380.0;
+/// Extra height of the mini player's lyrics row.
+pub(crate) const MINI_LYRICS_HEIGHT: f64 = 34.0;
+
+/// Height of the mini player window (logical pixels).
+pub(crate) fn mini_height(ui: &AppWindow) -> f64 {
+    MINI_HEIGHT + if ui.get_mini_lyrics() { MINI_LYRICS_HEIGHT } else { 0.0 } + ui.get_titlebar_inset() as f64
+}
 
 /// Moves the window back onto a screen if its saved position is on none of
 /// them (e.g. a monitor that was unplugged). Not possible on Wayland, where
@@ -374,7 +382,7 @@ pub(crate) fn keep_min_size(ui: &AppWindow) {
     use slint::winit_030::WinitWindowAccessor;
     // The mini player has a fixed height and a narrow width range.
     let mini = ui.get_mini_player();
-    let mini_h = MINI_HEIGHT + ui.get_titlebar_inset() as f64;
+    let mini_h = mini_height(ui);
     let (min, max) = if mini {
         ((MINI_WIDTH.0, mini_h), Some(LogicalSize::new(MINI_WIDTH.1, mini_h)))
     } else {

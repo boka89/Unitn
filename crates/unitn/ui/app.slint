@@ -83,7 +83,7 @@ export component AppWindow inherits Window {
     title: "Unitn player";
     icon: @image-url("../icons/256x256.png");
     min-width: root.mini-player ? 340px : 960px;
-    min-height: root.mini-player ? 132px + root.titlebar-inset : 620px;
+    min-height: root.mini-player ? 132px + (root.mini-lyrics ? 34px : 0px) + root.titlebar-inset : 620px;
     always-on-top: root.mini-player && root.mini-on-top;
     preferred-width: 1280px;
     preferred-height: 820px;
@@ -99,6 +99,9 @@ export component AppWindow inherits Window {
     in property <bool> mini-player: false;
     in-out property <bool> mini-on-top: true;
     callback toggle-mini-player();
+    /// The mini player shows the line of the lyrics being sung.
+    in property <bool> mini-lyrics: false;
+    callback toggle-mini-lyrics();
 
     // Pages: 0 albums, 1 artists, 2 songs, 3 radio, 4 queue, 5 album detail, 6 now playing, 7 settings, 8 playlist
     in-out property <int> page: 0;
@@ -1327,6 +1330,15 @@ export component AppWindow inherits Window {
                                 tint: Theme.fg-muted;
                                 clicked => { root.toggle-like(); }
                             }
+                            // Show / hide the line of lyrics.
+                            IconButton {
+                                icon: @image-url("icons/lyrics.svg");
+                                size: 32px;
+                                icon-size: 16px;
+                                active: root.mini-lyrics;
+                                tint: root.mini-lyrics ? Theme.accent : Theme.fg-muted;
+                                clicked => { root.toggle-mini-lyrics(); }
+                            }
                         }
                     }
                     VerticalLayout {
@@ -1414,6 +1426,30 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+                    }
+                }
+                // The line of the lyrics being sung (synced lyrics), or why
+                // there is none.
+                if root.mini-lyrics: Rectangle {
+                    height: 26px;
+                    border-radius: 8px;
+                    background: Theme.fg.transparentize(0.94);
+                    property <bool> has-line: root.lyrics-synced && root.lyrics-current >= 0
+                        && root.lyrics-current < root.lyrics-lines.length;
+                    Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        text: parent.has-line ? root.lyrics-lines[root.lyrics-current]
+                            : root.lyrics-synced ? "♪"
+                            : root.lyrics-lines.length > 0 ? "These lyrics aren't synced: open Now Playing to read them"
+                            : root.lyrics-status;
+                        color: parent.has-line ? Theme.fg : Theme.fg-muted;
+                        font-size: parent.has-line ? 13px : 12px;
+                        font-weight: parent.has-line ? 600 : 400;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        overflow: elide;
                     }
                 }
             }

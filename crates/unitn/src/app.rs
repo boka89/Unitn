@@ -628,8 +628,7 @@ impl App {
             // The mini player comes back where it was last, at its last width.
             let width = self.settings.mini_width.filter(|w| w.is_finite()).unwrap_or(crate::MINI_DEFAULT_WIDTH);
             let width = width.clamp(crate::MINI_WIDTH.0 as f32, crate::MINI_WIDTH.1 as f32);
-            let height = crate::MINI_HEIGHT as f32 + ui.get_titlebar_inset();
-            window.set_size(slint::LogicalSize::new(width, height));
+            window.set_size(slint::LogicalSize::new(width, crate::mini_height(&ui) as f32));
             if let Some((x, y)) = self.settings.mini_x.zip(self.settings.mini_y) {
                 window.set_position(slint::PhysicalPosition::new(x, y));
                 crate::keep_on_screen(&ui);
@@ -661,6 +660,28 @@ impl App {
             log("window: full player");
         }
         self.save_settings();
+        // The mini player may show lyrics while the lyrics panel is closed.
+        self.load_lyrics();
+    }
+
+    /// Shows or hides the mini player's line of lyrics.
+    pub fn toggle_mini_lyrics(&mut self) {
+        let Some(ui) = self.ui() else { return };
+        self.settings.mini_lyrics = !self.settings.mini_lyrics;
+        ui.set_mini_lyrics(self.settings.mini_lyrics);
+        if ui.get_mini_player() {
+            crate::keep_min_size(&ui);
+            let width = ui.window().size().to_logical(ui.window().scale_factor()).width;
+            ui.window().set_size(slint::LogicalSize::new(width, crate::mini_height(&ui) as f32));
+        }
+        self.save_settings();
+        self.load_lyrics();
+    }
+
+    /// Whether lyrics are shown anywhere: the lyrics panel, or the mini
+    /// player's line.
+    fn lyrics_wanted(&self) -> bool {
+        self.settings.lyrics_open || (self.settings.mini_lyrics && self.ui().is_some_and(|ui| ui.get_mini_player()))
     }
 
     pub fn save_settings(&self) {
@@ -3457,7 +3478,7 @@ impl App {
 
     /// Finds lyrics for the current song when the lyrics panel is open.
     fn load_lyrics(&mut self) {
-        if !self.settings.lyrics_open {
+        if !self.lyrics_wanted() {
             return;
         }
         let track = match self.current_item().cloned() {
@@ -3976,6 +3997,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_save_queue_as_playlist, |a| a.save_queue_as_playlist());
     on!(on_toggle_like, |a| a.toggle_like());
     on!(on_toggle_mini_player, |a| a.toggle_mini_player());
+    on!(on_toggle_mini_lyrics, |a| a.toggle_mini_lyrics());
     on!(on_set_sort, |a, page, index| a.set_sort(page, index.max(0) as usize));
     on!(on_flip_sort, |a, page| a.flip_sort(page));
     on!(on_track_menu_requested, |a, c, i| a.track_menu_requested(c, i));
