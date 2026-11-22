@@ -57,10 +57,12 @@ component AlbumCard inherits Rectangle {
     in property <bool> playing;
     /// What a drag of the card carries (see Dnd.payload); "" = not draggable.
     in property <string> drag-what;
+    /// Size of the cover; the grid makes it bigger to fill its rows.
+    in property <length> art: 160px;
     callback clicked;
 
-    width: 176px;
-    height: 232px;
+    width: root.art + 16px;
+    height: root.art + 72px;
     border-radius: 12px;
     background: touch.has-hover ? Theme.surface : transparent;
     animate background { duration: 120ms; }
@@ -69,10 +71,10 @@ component AlbumCard inherits Rectangle {
         padding: 8px;
         spacing: 4px;
         Rectangle {
-            width: 160px;
-            height: 160px;
+            width: root.art;
+            height: root.art;
             Artwork {
-                size: 160px;
+                size: root.art;
                 source: root.item.cover;
                 has-image: root.item.has-cover;
             }
@@ -143,10 +145,15 @@ export component AlbumsPage inherits Rectangle {
     callback open-album(int);
     callback add-folder();
 
-    property <length> cell-w: 184px;
-    property <length> cell-h: 240px;
-    // 40px margins plus room for the vertical scrollbar, so the last column is never under it.
-    property <int> cols: Math.max(1, Math.floor((root.width - 40px - 16px) / cell-w));
+    // Width for the cards: 20px margins plus the scrollbar lane, so the last
+    // column is never under the scrollbar.
+    property <length> avail: root.width - 40px - Theme.scroll-gutter;
+    // As many columns as fit at the smallest card size (160px cover + 24px)…
+    property <int> cols: Math.max(1, Math.floor(root.avail / 184px));
+    // …and the cards grow to fill the row exactly, with no gap on the right.
+    property <length> cell-w: Math.max(184px, root.avail / root.cols);
+    property <length> art: Math.floor((root.cell-w - 24px) / 1px) * 1px;
+    property <length> cell-h: root.art + 80px;
 
     if root.albums.length > 0: ScrollView {
         horizontal-scrollbar-policy: always-off;
@@ -158,6 +165,7 @@ export component AlbumsPage inherits Rectangle {
             x: 20px + Math.mod(i, root.cols) * root.cell-w;
             y: 8px + Math.floor(i / root.cols) * root.cell-h;
             item: album;
+            art: root.art;
             playing: album.key != "" && album.key == root.playing-album;
             drag-what: "album:" + i;
             clicked => { root.open-album(i); }

@@ -382,8 +382,9 @@ pub struct App {
     playlist_tracks: Vec<Track>,
     /// (context, index) of the song menu that is open.
     menu_target: (i32, i32),
-    /// Size and maximized state of the full window while the mini player is shown.
-    full_window: Option<(f32, f32, bool)>,
+    /// Size, maximized state and position of the full window while the mini
+    /// player is shown.
+    full_window: Option<(f32, f32, bool, Option<(i32, i32)>)>,
     /// Queue index the engine was told to play next (gapless).
     planned_next: Option<usize>,
     eq_gains_model: Rc<VecModel<f32>>,
@@ -592,6 +593,23 @@ impl App {
         }
     }
 
+    /// Remembers where the full window or the mini player is on the screen.
+    pub fn remember_position(&mut self, mini: bool, x: i32, y: i32) {
+        // Windows reports -32000 for minimized windows.
+        if x <= -30000 || y <= -30000 {
+            return;
+        }
+        if mini {
+            (self.settings.mini_x, self.settings.mini_y) = (Some(x), Some(y));
+        } else {
+            (self.settings.window_x, self.settings.window_y) = (Some(x), Some(y));
+        }
+    }
+
+    pub fn remember_mini_width(&mut self, width: f32) {
+        self.settings.mini_width = Some(width);
+    }
+
     /// Switches between the full window and the mini player.
     pub fn toggle_mini_player(&mut self) {
         let Some(ui) = self.ui() else { return };
@@ -601,23 +619,48 @@ impl App {
                 ui.set_viz_fullscreen(false);
             }
             let size = window.size().to_logical(window.scale_factor());
-            self.full_window = Some((size.width, size.height, window.is_maximized()));
+            let pos = window.position();
+            let maximized = window.is_maximized();
+            self.full_window = Some((size.width, size.height, maximized, (!maximized).then_some((pos.x, pos.y))));
             window.set_maximized(false);
             ui.set_mini_player(true);
             crate::keep_min_size(&ui);
+            // The mini player comes back where it was last, at its last width.
+            let width = self.settings.mini_width.filter(|w| w.is_finite()).unwrap_or(crate::MINI_DEFAULT_WIDTH);
+            let width = width.clamp(crate::MINI_WIDTH.0 as f32, crate::MINI_WIDTH.1 as f32);
             let height = crate::MINI_HEIGHT as f32 + ui.get_titlebar_inset();
-            window.set_size(slint::LogicalSize::new(380.0, height));
+            window.set_size(slint::LogicalSize::new(width, height));
+            if let Some((x, y)) = self.settings.mini_x.zip(self.settings.mini_y) {
+                window.set_position(slint::PhysicalPosition::new(x, y));
+                crate::keep_on_screen(&ui);
+            }
+            self.settings.mini_player = true;
             log("window: mini player");
         } else {
             ui.set_mini_player(false);
             crate::keep_min_size(&ui);
-            let (w, h, maximized) = self.full_window.take().unwrap_or((1280.0, 820.0, false));
+            // Back to the full window's size and place (also after the app
+            // was started as the mini player).
+            let s = &self.settings;
+            let saved = (
+                s.window_width.unwrap_or(1280.0).max(960.0),
+                s.window_height.unwrap_or(820.0).max(620.0),
+                s.window_maximized,
+                s.window_x.zip(s.window_y),
+            );
+            let (w, h, maximized, pos) = self.full_window.take().unwrap_or(saved);
             window.set_size(slint::LogicalSize::new(w, h));
+            if let Some((x, y)) = pos {
+                window.set_position(slint::PhysicalPosition::new(x, y));
+                crate::keep_on_screen(&ui);
+            }
             if maximized {
                 window.set_maximized(true);
             }
+            self.settings.mini_player = false;
             log("window: full player");
         }
+        self.save_settings();
     }
 
     pub fn save_settings(&self) {
