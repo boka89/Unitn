@@ -2,6 +2,40 @@
 
 Older versions: see the [changelog on the website](https://unitn.bokors.net/changelog/).
 
+## 0.6.5 — 2026-11-22
+
+Everything from **@jo-el414**'s latest round of testing and ideas (#24–#28). Thanks!
+
+### New
+
+- **Sorting** on the Albums, Artists and Songs pages: a **Sort** button in the header opens the
+  orders, the arrow next to it flips the direction, and the choice is remembered. (#25)
+  - Albums: Artist (each artist's albums oldest to newest), Title, Year (newest first),
+    Recently added.
+  - Artists: Name, Most albums, Most songs, Recently added.
+  - Songs: Artist, Title, Album, Year, Length, Genre, Recently added.
+  - Names ignore a leading "The", "A" or "An" (The Beatles under B); albums and songs
+    without a year or genre stay at the end.
+  - Unitn now remembers when each song was added to the library. Songs already in it use
+    their file's date.
+- **Artists page redesign**: a grid of round artist pictures with the number of albums and
+  songs. The picture is your own `artist.jpg`, else a downloaded photo, else one of the
+  artist's album covers. Missing photos are downloaded slowly in the background (when album
+  art downloads are on) and appear as they arrive. (#27)
+- **Lyrics in the mini player**: the lyrics button shows a row with the line being sung. (#28)
+
+### Fixed
+
+- **Windows media overlay**: shows the name "Unitn" now. The installer's shortcuts carry an
+  app ID that the app itself never claimed, so Windows couldn't tell which app was playing.
+  (#24)
+- **Mini player position**: the mini player comes back where you left it and at its width,
+  also after restarting; if Unitn was closed as the mini player, it starts as one. The full
+  window's position is remembered too. A window on a monitor that's gone is moved back onto
+  the screen. (#24)
+- **Albums page**: the album covers grow to fill each row, so there's no empty strip on the
+  right. (#26)
+
 ## 0.6.1 — 2026-11-21
 
 Two features asked for by **@jo-el414** (#19, #21). Thanks!
