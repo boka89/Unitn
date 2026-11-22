@@ -94,6 +94,14 @@ run_theme() { # theme-number name
   xdotool windowmove "$WID" 0 0 windowsize "$WID" 1280 820
   sleep 2
   shot "$2-albums"
+  if [ "$2" = dark ]; then
+    click 870 34 1         # Sort: … menu in the header
+    shot "$2-sort-menu"
+    click 1000 650 1       # close it (empty space)
+  fi
+  click 120 160 3          # Artists: grid of artist pictures
+  shot "$2-artists"
+  click 120 117 2          # back to Albums
   click 341 160            # first album card
   shot "$2-album"
   if [ "$2" = dark ]; then
@@ -114,6 +122,9 @@ run_theme() { # theme-number name
   xdotool windowfocus "$WID" 2>/dev/null || true
   xdotool key ctrl+shift+m; sleep 2   # mini player
   shot "$2-mini"
+  click 241 64 2                      # mini player: lyrics row on
+  shot "$2-mini-lyrics"
+  click 241 64 1                      # and off again
   xdotool key ctrl+shift+m; sleep 2   # and back to the full window
   shot "$2-after-mini"
   click 45 776 3           # Now Playing (visualizer): the cover on the player bar

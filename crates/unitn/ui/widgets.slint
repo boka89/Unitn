@@ -30,6 +30,10 @@ export struct ArtistItem {
     name: string,
     info: string,
     initial: string,
+    /// The artist's photo (their own artist.jpg or a downloaded one), or one
+    /// of their album covers.
+    image: image,
+    has-image: bool,
 }
 
 export struct StationItem {

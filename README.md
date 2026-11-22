@@ -8,7 +8,7 @@ no account and no tracking.
 
 **Website and downloads: [unitn.bokors.net](https://unitn.bokors.net)**
 
-> Status: v0.6.1 — young but usable. Feedback and contributions welcome.
+> Status: v0.6.5 — young but usable. Feedback and contributions welcome.
 
 ![Unitn playing an album, dark theme](docs/screenshots/dark-playing.png)
 
@@ -27,7 +27,11 @@ no account and no tracking.
 - **Local library**: scans your music folders (MP3, FLAC, AAC/M4A, ALAC, OGG Vorbis, WAV, AIFF),
   reading tags and embedded or folder cover art
 - **Albums, Artists and Songs** views (album pages show year and genre) with instant search, Apple-style striped track lists,
-  Comfy and Cozy list density, and a play marker on the current song
+  Comfy and Cozy list density, and a play marker on the current song. Artists are a grid of
+  photos (your own `artist.jpg`, a downloaded photo or an album cover)
+- **Sorting** on every library page, remembered: Albums by artist, title, year or recently
+  added; Artists by name, most albums, most songs or recently added; Songs by artist, title,
+  album, year, length, genre or recently added. Names ignore a leading "The", "A" or "An"
 - **Album art**: missing covers are downloaded from the free MusicBrainz / Cover Art Archive,
   and artist photos appear behind Now Playing: your own `artist.jpg` (`.png`, `.webp`) from the
   artist or album folder if you have one, otherwise a photo from Wikimedia Commons
@@ -58,7 +62,8 @@ no account and no tracking.
 - **Drag & drop** files, folders and M3U playlists onto the window
 - **Volume** with a mute button (click the speaker, or press M) and mouse-wheel control over the
   volume bar
-- **Mini player**: a small window with the cover, song, play controls, like, seek bar and volume
+- **Mini player**: a small window with the cover, song, play controls, like, seek bar, volume and
+  optionally a line of synced lyrics; it remembers where you put it
   that stays on top of other windows (can be unpinned). Open it with the button on the player
   bar or ⌘/Ctrl+Shift+M; the expand button or a double-click on the cover brings the full window back
 - **Keyboard shortcuts** (Space, ←/→ seek, ⌘/Ctrl+←/→ track, ↑/↓ volume, M mute, ⌘/Ctrl+F search,
