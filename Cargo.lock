@@ -5806,6 +5806,7 @@ dependencies = [
  "slint-build",
  "souvlaki",
  "unitn-core",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

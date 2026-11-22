@@ -2,6 +2,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod app_id;
 mod glass;
 mod intro;
 mod media;
@@ -74,6 +75,10 @@ fn run() -> Result<()> {
     let library = Library::open(&paths.database)?;
 
     configure_window_style()?;
+    // Windows: the app's identity (name and icon in the media overlay), before any window exists.
+    if let Some(data_dir) = paths.database.parent() {
+        app_id::register(data_dir);
+    }
     unitn_core::log::log("startup: creating window");
     let ui = AppWindow::new()?;
     if cfg!(target_os = "macos") {
