@@ -60,6 +60,8 @@ pub struct Album {
     pub track_count: u32,
     pub duration_ms: u64,
     pub cover: Option<PathBuf>,
+    /// When the album's newest song was added to the library (Unix seconds).
+    pub added: i64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -67,6 +69,12 @@ pub struct Artist {
     pub name: String,
     pub album_count: u32,
     pub track_count: u32,
+    /// When the artist's newest song was added to the library (Unix seconds).
+    pub added: i64,
+    /// One of the artist's album covers, for when there is no artist photo.
+    pub cover: Option<PathBuf>,
+    /// One of the artist's songs, to look for an `artist.jpg` next to it.
+    pub sample: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

@@ -539,6 +539,7 @@ impl App {
             ui.set_lyrics_online(self.settings.lyrics_online);
             ui.set_startup_sound(self.settings.startup_sound);
             ui.set_lyrics_open(self.settings.lyrics_open);
+            self.show_sort();
             ui.set_glass_available(crate::glass::AVAILABLE);
             ui.set_glass(self.settings.glass && crate::glass::AVAILABLE);
             ui.global::<Theme>().set_glass(self.settings.glass && crate::glass::AVAILABLE);
@@ -1192,23 +1193,13 @@ impl App {
         self.artists = self.library.artists().unwrap_or_default();
         self.songs = self.library.tracks(Some(&self.query)).unwrap_or_default();
         let count = self.library.track_count().unwrap_or(0);
+        self.sort_albums();
+        self.sort_artists();
+        self.sort_songs();
 
         let albums = self.albums.clone();
         let album_items: Vec<AlbumItem> = albums.iter().map(|a| self.album_item(a)).collect();
-        let artist_items: Vec<ArtistItem> = self
-            .artists
-            .iter()
-            .map(|a| ArtistItem {
-                name: a.name.as_str().into(),
-                info: format!(
-                    "{} • {}",
-                    plural(a.album_count as usize, "album", "albums"),
-                    plural(a.track_count as usize, "song", "songs")
-                )
-                .into(),
-                initial: initial(&a.name),
-            })
-            .collect();
+        let artist_items = self.artist_items();
         let song_items: Vec<TrackItem> =
             self.songs.iter().enumerate().map(|(i, t)| Self::track_item(t, (i + 1).to_string())).collect();
 
@@ -1478,6 +1469,7 @@ impl App {
     pub fn search_library(&mut self, query: &str) {
         self.query = query.trim().to_string();
         self.songs = self.library.tracks(Some(&self.query)).unwrap_or_default();
+        self.sort_songs();
         self.show_songs();
         if let Some(ui) = self.ui() {
             ui.set_library_query(self.query.as_str().into());
@@ -1505,6 +1497,107 @@ impl App {
         });
     }
 
+    fn sort_albums(&mut self) {
+        unitn_core::sort::sort_albums(&mut self.albums, self.settings.album_sort, self.settings.album_sort_reversed);
+    }
+
+    fn sort_artists(&mut self) {
+        unitn_core::sort::sort_artists(&mut self.artists, self.settings.artist_sort, self.settings.artist_sort_reversed);
+    }
+
+    fn sort_songs(&mut self) {
+        // Dates added are only needed for "Recently added".
+        let added = if self.settings.song_sort == 6 { self.library.added_times().unwrap_or_default() } else { HashMap::new() };
+        unitn_core::sort::sort_songs(&mut self.songs, self.settings.song_sort, self.settings.song_sort_reversed, &added);
+    }
+
+    fn artist_items(&self) -> Vec<ArtistItem> {
+        self.artists
+            .iter()
+            .map(|a| ArtistItem {
+                name: a.name.as_str().into(),
+                info: format!(
+                    "{} • {}",
+                    plural(a.album_count as usize, "album", "albums"),
+                    plural(a.track_count as usize, "song", "songs")
+                )
+                .into(),
+                initial: initial(&a.name),
+            })
+            .collect()
+    }
+
+    /// Shows the sort menus' labels and the chosen orders.
+    fn show_sort(&self) {
+        use unitn_core::sort::{Order, ALBUM_ORDERS, ARTIST_ORDERS, SONG_ORDERS};
+        let Some(ui) = self.ui() else { return };
+        let labels = |orders: &[Order]| model(orders.iter().map(|o| SharedString::from(o.label)).collect::<Vec<_>>());
+        let desc = |orders: &[Order], i: usize, reversed: bool| orders.get(i).map(|o| o.descending).unwrap_or(false) != reversed;
+        let s = &self.settings;
+        ui.set_album_sort_labels(labels(ALBUM_ORDERS));
+        ui.set_artist_sort_labels(labels(ARTIST_ORDERS));
+        ui.set_song_sort_labels(labels(SONG_ORDERS));
+        ui.set_album_sort(s.album_sort as i32);
+        ui.set_artist_sort(s.artist_sort as i32);
+        ui.set_song_sort(s.song_sort as i32);
+        ui.set_album_sort_desc(desc(ALBUM_ORDERS, s.album_sort, s.album_sort_reversed));
+        ui.set_artist_sort_desc(desc(ARTIST_ORDERS, s.artist_sort, s.artist_sort_reversed));
+        ui.set_song_sort_desc(desc(SONG_ORDERS, s.song_sort, s.song_sort_reversed));
+    }
+
+    /// Picks the sort order of a page (0 Albums, 1 Artists, 2 Songs), in its
+    /// natural direction.
+    pub fn set_sort(&mut self, page: i32, index: usize) {
+        use unitn_core::sort::{ALBUM_ORDERS, ARTIST_ORDERS, SONG_ORDERS};
+        let s = &mut self.settings;
+        match page {
+            0 if index < ALBUM_ORDERS.len() => (s.album_sort, s.album_sort_reversed) = (index, false),
+            1 if index < ARTIST_ORDERS.len() => (s.artist_sort, s.artist_sort_reversed) = (index, false),
+            2 if index < SONG_ORDERS.len() => (s.song_sort, s.song_sort_reversed) = (index, false),
+            _ => return,
+        }
+        self.apply_sort(page);
+    }
+
+    /// Flips the direction of a page's sort order.
+    pub fn flip_sort(&mut self, page: i32) {
+        let s = &mut self.settings;
+        match page {
+            0 => s.album_sort_reversed = !s.album_sort_reversed,
+            1 => s.artist_sort_reversed = !s.artist_sort_reversed,
+            2 => s.song_sort_reversed = !s.song_sort_reversed,
+            _ => return,
+        }
+        self.apply_sort(page);
+    }
+
+    fn apply_sort(&mut self, page: i32) {
+        self.save_settings();
+        self.show_sort();
+        match page {
+            0 => {
+                self.sort_albums();
+                let albums = self.albums.clone();
+                let items: Vec<AlbumItem> = albums.iter().map(|a| self.album_item(a)).collect();
+                if let Some(ui) = self.ui() {
+                    ui.set_albums(model(items));
+                }
+                self.load_thumbs();
+            }
+            1 => {
+                self.sort_artists();
+                let items = self.artist_items();
+                if let Some(ui) = self.ui() {
+                    ui.set_artists(model(items));
+                }
+            }
+            _ => {
+                self.sort_songs();
+                self.show_songs();
+            }
+        }
+    }
+
     fn show_songs(&mut self) {
         let items: Vec<TrackItem> =
             self.songs.iter().enumerate().map(|(i, t)| Self::track_item(t, (i + 1).to_string())).collect();
@@ -1519,6 +1612,7 @@ impl App {
         }
         self.songs = self.library.tracks(Some(&self.query)).unwrap_or_default();
         self.songs.extend(tracks);
+        self.sort_songs();
         self.show_songs();
     }
 
@@ -2160,6 +2254,7 @@ impl App {
             track_count: tracks.len() as u32,
             duration_ms: tracks.iter().map(|t| t.duration_ms).sum(),
             cover: tracks.first().and_then(|t| t.cover.clone()).or_else(|| self.server_cover_of(album)),
+            added: 0,
         }
     }
 
@@ -3838,6 +3933,8 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_save_queue_as_playlist, |a| a.save_queue_as_playlist());
     on!(on_toggle_like, |a| a.toggle_like());
     on!(on_toggle_mini_player, |a| a.toggle_mini_player());
+    on!(on_set_sort, |a, page, index| a.set_sort(page, index.max(0) as usize));
+    on!(on_flip_sort, |a, page| a.flip_sort(page));
     on!(on_track_menu_requested, |a, c, i| a.track_menu_requested(c, i));
     on!(on_track_menu_action, |a, action, pl| a.track_menu_action(action, pl));
     on!(on_open_server, |a, i| a.open_server(i.max(0) as usize));

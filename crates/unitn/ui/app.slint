@@ -106,6 +106,28 @@ export component AppWindow inherits Window {
     // Library
     in property <[AlbumItem]> albums;
     in property <string> albums-title: "Albums";
+
+    /// Sorting of the Albums (0), Artists (1) and Songs (2) pages: the menu
+    /// labels, the chosen order and whether it currently runs high-to-low.
+    in property <[string]> album-sort-labels;
+    in property <[string]> artist-sort-labels;
+    in property <[string]> song-sort-labels;
+    in property <int> album-sort;
+    in property <int> artist-sort;
+    in property <int> song-sort;
+    in property <bool> album-sort-desc;
+    in property <bool> artist-sort-desc;
+    in property <bool> song-sort-desc;
+    /// Choose an order on a page (page, order index).
+    callback set-sort(int, int);
+    /// Flip the direction of the page's order.
+    callback flip-sort(int);
+    property <[string]> sort-labels: root.page == 0 ? root.album-sort-labels
+        : root.page == 1 ? root.artist-sort-labels : root.song-sort-labels;
+    property <int> sort-index: root.page == 0 ? root.album-sort
+        : root.page == 1 ? root.artist-sort : root.song-sort;
+    property <bool> sort-desc: root.page == 0 ? root.album-sort-desc
+        : root.page == 1 ? root.artist-sort-desc : root.song-sort-desc;
     in property <bool> albums-filtered: false;
     in property <AlbumItem> album;
     /// Key of the album the playing song belongs to ("" for none).
@@ -680,6 +702,75 @@ export component AppWindow inherits Window {
                                         font-weight: 600;
                                         vertical-alignment: center;
                                     }
+                                }
+                            }
+                        }
+                        // Sort order of the Albums, Artists and Songs pages.
+                        if root.page <= 2: VerticalLayout {
+                            alignment: center;
+                            HorizontalLayout {
+                                spacing: 4px;
+                                sort-button := Rectangle {
+                                    height: 34px;
+                                    width: sort-row.preferred-width + 24px;
+                                    border-radius: 17px;
+                                    background: sort-touch.has-hover ? Theme.surface-hover : Theme.surface;
+                                    border-width: 1px;
+                                    border-color: Theme.border;
+                                    sort-row := HorizontalLayout {
+                                        x: 12px;
+                                        spacing: 6px;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Image {
+                                                source: @image-url("icons/sort.svg");
+                                                width: 15px;
+                                                height: 15px;
+                                                colorize: Theme.fg-muted;
+                                            }
+                                        }
+                                        Text {
+                                            text: "Sort: " + root.sort-labels[root.sort-index];
+                                            color: Theme.fg;
+                                            font-size: 13px;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    sort-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { sort-popup.show(); }
+                                    }
+                                    sort-popup := PopupWindow {
+                                        x: 0px;
+                                        y: parent.height + 4px;
+                                        width: 200px;
+                                        height: sort-box.preferred-height;
+                                        sort-box := Rectangle {
+                                            border-radius: 12px;
+                                            background: Theme.surface;
+                                            border-width: 1px;
+                                            border-color: Theme.border;
+                                            drop-shadow-blur: 20px;
+                                            drop-shadow-color: #00000050;
+                                            VerticalLayout {
+                                                padding: 6px;
+                                                spacing: 1px;
+                                                for label[i] in root.sort-labels: MenuRow {
+                                                    text: label;
+                                                    icon: i == root.sort-index ? @image-url("icons/check.svg") : @image-url("");
+                                                    clicked => { root.set-sort(root.page, i); }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // Direction: high-to-low (↓) or low-to-high (↑).
+                                IconButton {
+                                    icon: root.sort-desc ? @image-url("icons/sort-desc.svg") : @image-url("icons/sort-asc.svg");
+                                    size: 34px;
+                                    icon-size: 16px;
+                                    tint: Theme.fg-muted;
+                                    clicked => { root.flip-sort(root.page); }
                                 }
                             }
                         }
