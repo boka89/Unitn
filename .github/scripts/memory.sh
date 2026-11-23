@@ -68,12 +68,21 @@ rss_mb() { awk '/VmRSS/ { printf "%d", $2 / 1024 }' "/proc/$PID/status"; }
 click() { xdotool mousemove "$1" "$2" click 1; sleep "${3:-2}"; }
 
 DB="$HOME/.local/share/unitn/library.sqlite3"
-for i in $(seq 1 180); do
+n=0
+for i in $(seq 1 300); do
   n=$(sqlite3 "$DB" "SELECT COUNT(*) FROM tracks" 2>/dev/null || echo 0)
   [ "$n" -ge $((ALBUMS * SONGS)) ] && break
+  [ $((i % 15)) -eq 0 ] && echo "  ${i}s: $n songs in the library"
   sleep 1
 done
 echo "scanned: $n songs after ${i}s"
+if [ "$n" -lt $((ALBUMS * SONGS)) ]; then
+  echo "::error title=Memory check::The test library was not scanned ($n of $((ALBUMS * SONGS)) songs); no numbers measured"
+  echo "--- app log"; tail -n 60 "$OUT/log.txt" || true
+  ls -la "$HOME/.local/share/unitn" || true
+  kill $PID $XVFB 2>/dev/null || true
+  exit 1
+fi
 sleep 15   # covers decoded in the background
 WID=$(xdotool search --onlyvisible --name Unitn | head -1)
 xdotool windowmove "$WID" 0 0 windowsize "$WID" 1280 820
@@ -94,6 +103,7 @@ import -window root "$OUT/3-nowplaying.png"
 
 kill $PID 2>/dev/null || true
 kill $XVFB 2>/dev/null || true
+echo "--- app log (last lines)"; tail -n 25 "$OUT/log.txt" || true
 
 echo "RESULT memory: albums ${M1} MB, artists ${M2} MB, now playing ${M3} MB"
 {
