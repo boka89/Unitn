@@ -136,19 +136,34 @@ enum Item {
 
 /// Loads a cover and shrinks it to list size (at most 400 px, enough for the
 /// 200 px album page cover on high-DPI screens). Runs on the cover thread.
-fn decode_thumb(path: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
+const THUMB_SIZE: u32 = 320;
+
+/// Full-size images (Now Playing cover, artist photo behind it) are made no
+/// bigger than this, and only the last few are kept in memory.
+const COVER_MAX: u32 = 1920;
+const COVER_CACHE: usize = 6;
+
+/// Loads a full-size image, shrunk to at most [`COVER_MAX`] on its longer side.
+fn decode_cover(path: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
     let img = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok()?;
-    let img = if img.width() > 400 || img.height() > 400 { img.thumbnail(400, 400) } else { img };
+    let img = if img.width() > COVER_MAX || img.height() > COVER_MAX {
+        img.resize(COVER_MAX, COVER_MAX, image::imageops::FilterType::Triangle)
+    } else {
+        img
+    };
     let rgba = img.to_rgba8();
     Some(slint::SharedPixelBuffer::clone_from_slice(rgba.as_raw(), rgba.width(), rgba.height()))
 }
 
-/// Loads an image at full size, in any format the image crate reads (used
-/// for WebP, which Slint can't load itself).
-fn decode_full(path: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
-    let rgba = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok()?.to_rgba8();
+fn decode_thumb(path: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
+    let img = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok()?;
+    // 320px is sharp for the biggest album / artist cards and keeps memory
+    // down: a decoded thumbnail costs width × height × 4 bytes.
+    let img = if img.width() > THUMB_SIZE || img.height() > THUMB_SIZE { img.thumbnail(THUMB_SIZE, THUMB_SIZE) } else { img };
+    let rgba = img.to_rgba8();
     Some(slint::SharedPixelBuffer::clone_from_slice(rgba.as_raw(), rgba.width(), rgba.height()))
 }
+
 
 /// A podcast episode (its path is a made-up "podcast://…" key).
 fn is_episode(t: &Track) -> bool {
@@ -310,6 +325,10 @@ pub struct App {
     bg_rx: Receiver<Bg>,
 
     covers: HashMap<PathBuf, Option<Image>>,
+    /// Paths in `covers`, least recently used first.
+    cover_order: std::collections::VecDeque<PathBuf>,
+    /// The Artists page has been opened: its pictures are loaded from then on.
+    artist_pictures: bool,
     albums: Vec<Album>,
     artist_filter: Option<String>,
     album_tracks: Vec<Track>,
@@ -446,6 +465,8 @@ impl App {
             bg_tx,
             bg_rx,
             covers: HashMap::new(),
+            cover_order: std::collections::VecDeque::new(),
+            artist_pictures: false,
             albums: Vec::new(),
             artist_filter: None,
             album_tracks: Vec::new(),
@@ -551,6 +572,7 @@ impl App {
             ui.set_startup_sound(self.settings.startup_sound);
             ui.set_lyrics_open(self.settings.lyrics_open);
             self.show_sort();
+            ui.set_sort_ignore_articles(self.settings.sort_ignore_articles);
             ui.set_glass_available(crate::glass::AVAILABLE);
             ui.set_glass(self.settings.glass && crate::glass::AVAILABLE);
             ui.global::<Theme>().set_glass(self.settings.glass && crate::glass::AVAILABLE);
@@ -1157,17 +1179,26 @@ impl App {
     // Library
     // ------------------------------------------------------------------
 
+    /// A full-size image (cover or artist photo). Only the last
+    /// [`COVER_CACHE`] are kept, so memory doesn't grow with every artist played.
     fn cover(&mut self, path: &Option<PathBuf>) -> (Image, bool) {
         let Some(path) = path else { return (Image::default(), false) };
-        let entry = self
-            .covers
-            .entry(path.clone())
-            // Slint reads PNG and JPEG itself; other formats (WebP artist
-            // photos) go through the image crate.
-            .or_insert_with(|| Image::load_from_path(path).ok().or_else(|| decode_full(path).map(Image::from_rgba8)));
-        match entry {
-            Some(img) => (img.clone(), true),
-            None => (Image::default(), false),
+        if let Some(i) = self.cover_order.iter().position(|p| p == path) {
+            let p = self.cover_order.remove(i).unwrap_or_else(|| path.clone());
+            self.cover_order.push_back(p);
+        } else {
+            let img = decode_cover(path).map(Image::from_rgba8);
+            self.covers.insert(path.clone(), img);
+            self.cover_order.push_back(path.clone());
+            while self.cover_order.len() > COVER_CACHE {
+                if let Some(old) = self.cover_order.pop_front() {
+                    self.covers.remove(&old);
+                }
+            }
+        }
+        match self.covers.get(path) {
+            Some(Some(img)) => (img.clone(), true),
+            _ => (Image::default(), false),
         }
     }
 
@@ -1231,7 +1262,7 @@ impl App {
             }
         }
         let artists = ui.get_artists();
-        for i in 0..self.artists.len() {
+        for i in 0..if self.artist_pictures { self.artists.len() } else { 0 } {
             let Some(path) = self.artist_picture(&self.artists[i]).filter(|p| ready.contains(p)) else { continue };
             if let (Some(mut row), Some(Some(img))) = (artists.row_data(i), self.thumbs.get(&path)) {
                 row.image = img.clone();
@@ -1587,17 +1618,20 @@ impl App {
     }
 
     fn sort_albums(&mut self) {
-        unitn_core::sort::sort_albums(&mut self.albums, self.settings.album_sort, self.settings.album_sort_reversed);
+        let s = &self.settings;
+        unitn_core::sort::sort_albums(&mut self.albums, s.album_sort, s.album_sort_reversed, s.sort_ignore_articles);
     }
 
     fn sort_artists(&mut self) {
-        unitn_core::sort::sort_artists(&mut self.artists, self.settings.artist_sort, self.settings.artist_sort_reversed);
+        let s = &self.settings;
+        unitn_core::sort::sort_artists(&mut self.artists, s.artist_sort, s.artist_sort_reversed, s.sort_ignore_articles);
     }
 
     fn sort_songs(&mut self) {
         // Dates added are only needed for "Recently added".
         let added = if self.settings.song_sort == 6 { self.library.added_times().unwrap_or_default() } else { HashMap::new() };
-        unitn_core::sort::sort_songs(&mut self.songs, self.settings.song_sort, self.settings.song_sort_reversed, &added);
+        let s = &self.settings;
+        unitn_core::sort::sort_songs(&mut self.songs, s.song_sort, s.song_sort_reversed, &added, s.sort_ignore_articles);
     }
 
     /// The picture for an artist: their photo, else one of their album covers.
@@ -1606,7 +1640,9 @@ impl App {
     }
 
     fn artist_item(&mut self, a: &Artist) -> ArtistItem {
-        let (image, has_image) = self.thumb(&self.artist_picture(a));
+        // Pictures cost memory, so they load only once the page is opened.
+        let (image, has_image) =
+            if self.artist_pictures { self.thumb(&self.artist_picture(a)) } else { (Image::default(), false) };
         ArtistItem {
             name: a.name.as_str().into(),
             info: format!(
@@ -1643,8 +1679,22 @@ impl App {
     /// the music folders, else one downloaded earlier; then, if album art
     /// downloads are on, downloads the missing ones slowly (the photo
     /// services ask for no more than about one request a second).
+    /// The Artists page was opened: load its pictures (once).
+    pub fn open_artists_page(&mut self) {
+        if self.artist_pictures {
+            return;
+        }
+        self.artist_pictures = true;
+        let items = self.artist_items();
+        if let Some(ui) = self.ui() {
+            ui.set_artists(model(items));
+        }
+        self.load_thumbs();
+        self.find_artist_photos();
+    }
+
     fn find_artist_photos(&mut self) {
-        if self.artist_photos_running || self.artists.is_empty() {
+        if !self.artist_pictures || self.artist_photos_running || self.artists.is_empty() {
             return;
         }
         self.artist_photos_running = true;
@@ -1750,6 +1800,14 @@ impl App {
             _ => return,
         }
         self.apply_sort(page);
+    }
+
+    /// Whether sorting skips a leading "The", "A" or "An"; re-sorts all pages.
+    pub fn set_sort_ignore_articles(&mut self, on: bool) {
+        self.settings.sort_ignore_articles = on;
+        for page in 0..3 {
+            self.apply_sort(page);
+        }
     }
 
     fn apply_sort(&mut self, page: i32) {
@@ -4117,6 +4175,8 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_toggle_mini_player, |a| a.toggle_mini_player());
     on!(on_toggle_mini_lyrics, |a| a.toggle_mini_lyrics());
     on!(on_set_sort, |a, page, index| a.set_sort(page, index.max(0) as usize));
+    on!(on_sort_ignore_articles_changed, |a, on| a.set_sort_ignore_articles(on));
+    on!(on_artists_opened, |a| a.open_artists_page());
     on!(on_flip_sort, |a, page| a.flip_sort(page));
     on!(on_track_menu_requested, |a, c, i| a.track_menu_requested(c, i));
     on!(on_track_menu_action, |a, action, pl| a.track_menu_action(action, pl));
