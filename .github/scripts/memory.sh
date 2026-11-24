@@ -12,6 +12,9 @@ set -euo pipefail
 LIMIT_MB=${LIMIT_MB:-400}
 BIN="$PWD/target/release/unitn"
 export HOME="$(mktemp -d)"
+# A home of its own, separate from the screenshots' library. GitHub's
+# Ubuntu runners set XDG_CONFIG_HOME, so point all XDG folders here too.
+export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_CACHE_HOME="$HOME/.cache"
 MUSIC="$HOME/Music"
 OUT="$PWD/memory"
 mkdir -p "$MUSIC" "$OUT"
