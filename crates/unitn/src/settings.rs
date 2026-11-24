@@ -11,6 +11,9 @@ pub struct Paths {
     pub covers: PathBuf,
     /// Downloaded artist photos, named after the artist.
     pub artists: PathBuf,
+    /// Small copies (320px JPEG) of album covers and artist photos, for the
+    /// Albums and Artists grids.
+    pub thumbs: PathBuf,
     pub settings: PathBuf,
 }
 
@@ -27,6 +30,7 @@ impl Paths {
             database: data.join("library.sqlite3"),
             covers: data.join("covers"),
             artists: data.join("artists"),
+            thumbs: data.join("thumbs"),
             settings: config.join("settings.json"),
         })
     }

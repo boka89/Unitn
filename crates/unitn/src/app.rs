@@ -141,7 +141,7 @@ const THUMB_SIZE: u32 = 320;
 /// Full-size images (Now Playing cover, artist photo behind it) are made no
 /// bigger than this, and only the last few are kept in memory.
 const COVER_MAX: u32 = 1920;
-const COVER_CACHE: usize = 6;
+const COVER_CACHE: usize = 3;
 
 /// Loads a full-size image, shrunk to at most [`COVER_MAX`] on its longer side.
 fn decode_cover(path: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
@@ -155,11 +155,53 @@ fn decode_cover(path: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixe
     Some(slint::SharedPixelBuffer::clone_from_slice(rgba.as_raw(), rgba.width(), rgba.height()))
 }
 
-fn decode_thumb(path: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
-    let img = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok()?;
-    // 320px is sharp for the biggest album / artist cards and keeps memory
-    // down: a decoded thumbnail costs width × height × 4 bytes.
-    let img = if img.width() > THUMB_SIZE || img.height() > THUMB_SIZE { img.thumbnail(THUMB_SIZE, THUMB_SIZE) } else { img };
+/// Where the small copy of `path` is kept in the thumbnail folder. The name
+/// depends on the file's path, size and modification time, so an edited or
+/// replaced image gets a new thumbnail.
+fn thumb_file(path: &Path, dir: &Path) -> Option<PathBuf> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+    // FNV-1a: stable across Rust versions (unlike DefaultHasher).
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in path.to_string_lossy().bytes().chain(meta.len().to_le_bytes()).chain(mtime.to_le_bytes()) {
+        h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+    }
+    Some(dir.join(format!("{h:016x}.jpg")))
+}
+
+/// A cover or artist photo at grid size (at most [`THUMB_SIZE`]). It is read
+/// from the thumbnail folder when it's there; otherwise the original is
+/// decoded once, shrunk and saved there, so later visits only read a small
+/// JPEG instead of decoding a big image again.
+fn decode_thumb(path: &Path, dir: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
+    let cached = thumb_file(path, dir);
+    let from_cache = cached
+        .as_ref()
+        .and_then(|c| image::ImageReader::open(c).ok())
+        .and_then(|r| r.with_guessed_format().ok())
+        .and_then(|r| r.decode().ok());
+    let img = match from_cache {
+        Some(img) => img,
+        None => {
+            let img = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok()?;
+            // 320px is sharp for the biggest album / artist cards; a decoded
+            // thumbnail costs width × height × 4 bytes of memory.
+            let img = if img.width() > THUMB_SIZE || img.height() > THUMB_SIZE { img.thumbnail(THUMB_SIZE, THUMB_SIZE) } else { img };
+            if let Some(c) = &cached {
+                let _ = std::fs::create_dir_all(dir);
+                let rgb = img.to_rgb8();
+                if let Ok(file) = std::fs::File::create(c) {
+                    let mut out = std::io::BufWriter::new(file);
+                    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 88);
+                    if rgb.write_with_encoder(enc).is_err() {
+                        drop(out);
+                        let _ = std::fs::remove_file(c);
+                    }
+                }
+            }
+            img
+        }
+    };
     let rgba = img.to_rgba8();
     Some(slint::SharedPixelBuffer::clone_from_slice(rgba.as_raw(), rgba.width(), rgba.height()))
 }
@@ -327,8 +369,14 @@ pub struct App {
     covers: HashMap<PathBuf, Option<Image>>,
     /// Paths in `covers`, least recently used first.
     cover_order: std::collections::VecDeque<PathBuf>,
-    /// The Artists page has been opened: its pictures are loaded from then on.
+    /// The Artists page is shown (its pictures and photo lookups are wanted).
     artist_pictures: bool,
+    /// The page shown (0 Albums, 1 Artists, …).
+    page: i32,
+    /// Albums / artists on screen in their grid, with a screen's margin
+    /// above and below: only their pictures are kept in memory.
+    album_range: Option<(usize, usize)>,
+    artist_range: Option<(usize, usize)>,
     albums: Vec<Album>,
     artist_filter: Option<String>,
     album_tracks: Vec<Track>,
@@ -467,6 +515,9 @@ impl App {
             covers: HashMap::new(),
             cover_order: std::collections::VecDeque::new(),
             artist_pictures: false,
+            page: 0,
+            album_range: None,
+            artist_range: None,
             albums: Vec::new(),
             artist_filter: None,
             album_tracks: Vec::new(),
@@ -1204,18 +1255,104 @@ impl App {
 
     /// An album cover for lists. Decoding big covers takes long, so ones not
     /// loaded yet are handed to the cover thread and show up when ready.
+    /// A grid picture if it's decoded already. Which ones are decoded is
+    /// decided by [`Self::sync_thumbs`] (what's on screen).
     fn thumb(&mut self, path: &Option<PathBuf>) -> (Image, bool) {
-        let Some(path) = path else { return (Image::default(), false) };
-        match self.thumbs.get(path) {
+        match path.as_ref().and_then(|p| self.thumbs.get(p)) {
             Some(Some(img)) => (img.clone(), true),
-            Some(None) => (Image::default(), false),
-            None => {
-                if self.thumb_queued.insert(path.clone()) {
-                    self.thumb_queue.push(path.clone());
+            _ => (Image::default(), false),
+        }
+    }
+
+    /// The pictures that should be in memory, most important first: the
+    /// open album's cover, then the cards on screen (and a screen's margin)
+    /// of the Albums or Artists grid.
+    fn wanted_thumbs(&self) -> Vec<PathBuf> {
+        let mut wanted: Vec<PathBuf> = Vec::new();
+        if let Some(p) = self.open_album.as_ref().and_then(|a| a.cover.clone()) {
+            wanted.push(p);
+        }
+        if let (0, Some((a, b))) = (self.page, self.album_range) {
+            wanted.extend(self.albums.iter().take(b + 1).skip(a).filter_map(|al| al.cover.clone()));
+        }
+        if let (1, Some((a, b))) = (self.page, self.artist_range) {
+            wanted.extend(self.artists.iter().take(b + 1).skip(a).filter_map(|ar| self.artist_picture(ar)));
+        }
+        wanted
+    }
+
+    /// Keeps only the wanted pictures in memory: drops the others (also from
+    /// the grids) and starts decoding the missing ones.
+    fn sync_thumbs(&mut self) {
+        let wanted_list = self.wanted_thumbs();
+        let wanted: HashSet<PathBuf> = wanted_list.iter().cloned().collect();
+        let dropped: HashSet<PathBuf> = self.thumbs.keys().filter(|p| !wanted.contains(*p)).cloned().collect();
+        if !dropped.is_empty() {
+            for p in &dropped {
+                self.thumbs.remove(p);
+            }
+            if let Some(ui) = self.ui() {
+                let albums = ui.get_albums();
+                for (i, a) in self.albums.iter().enumerate() {
+                    if a.cover.as_ref().is_some_and(|p| dropped.contains(p)) {
+                        if let Some(mut row) = albums.row_data(i).filter(|r| r.has_cover) {
+                            row.cover = Image::default();
+                            row.has_cover = false;
+                            albums.set_row_data(i, row);
+                        }
+                    }
                 }
-                (Image::default(), false)
+                let artists = ui.get_artists();
+                for (i, a) in self.artists.iter().enumerate() {
+                    if self.artist_picture(a).is_some_and(|p| dropped.contains(&p)) {
+                        if let Some(mut row) = artists.row_data(i).filter(|r| r.has_image) {
+                            row.image = Image::default();
+                            row.has_image = false;
+                            artists.set_row_data(i, row);
+                        }
+                    }
+                }
             }
         }
+        // Decode what's missing (on screen first); forget queued pictures
+        // that scrolled away before their turn.
+        self.thumb_queue.retain(|p| wanted.contains(p));
+        // (Pictures being decoded right now are dropped when they arrive.)
+        self.thumb_queued.retain(|p| wanted.contains(p));
+        for p in wanted_list {
+            if !self.thumbs.contains_key(&p) && self.thumb_queued.insert(p.clone()) {
+                self.thumb_queue.push(p);
+            }
+        }
+        self.load_thumbs();
+    }
+
+    /// Albums `first..=last` are on screen in the Albums grid.
+    pub fn set_album_range(&mut self, first: i32, last: i32) {
+        // Only the Albums page shows this grid.
+        self.page = 0;
+        self.album_range = Self::with_margin(first, last);
+        self.sync_thumbs();
+    }
+
+    /// Artists `first..=last` are on screen in the Artists grid.
+    pub fn set_artist_range(&mut self, first: i32, last: i32) {
+        // Only the Artists page shows this grid.
+        if self.page != 1 {
+            self.page_changed(1);
+        }
+        self.artist_range = Self::with_margin(first, last);
+        self.sync_thumbs();
+    }
+
+    /// A visible range plus one screenful above and below it.
+    fn with_margin(first: i32, last: i32) -> Option<(usize, usize)> {
+        if last < first || last < 0 {
+            return None;
+        }
+        let (first, last) = (first.max(0) as usize, last as usize);
+        let span = last - first + 1;
+        Some((first.saturating_sub(span), last + span))
     }
 
     /// Starts the cover thread for the covers waiting, if it isn't running.
@@ -1225,10 +1362,11 @@ impl App {
         }
         self.thumbs_loading = true;
         let paths = std::mem::take(&mut self.thumb_queue);
-        let tx = self.bg_tx.clone();
+        let (tx, dir) = (self.bg_tx.clone(), self.paths.thumbs.clone());
         thread::spawn(move || {
-            for chunk in paths.chunks(12) {
-                let done: Vec<_> = chunk.iter().map(|p| (p.clone(), decode_thumb(p))).collect();
+            // Small chunks, so the cards on screen fill in quickly.
+            for chunk in paths.chunks(6) {
+                let done: Vec<_> = chunk.iter().map(|p| (p.clone(), decode_thumb(p, &dir))).collect();
                 if tx.send(Bg::Thumbs(done)).is_err() {
                     return;
                 }
@@ -1240,16 +1378,11 @@ impl App {
     /// Puts covers from the cover thread into the album grid and album page.
     fn on_thumbs(&mut self, done: Vec<(PathBuf, Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>)>) {
         let mut ready: HashSet<PathBuf> = HashSet::new();
-        // Artist photos that arrive after the Artists page was left are dropped.
-        let unwanted: HashSet<PathBuf> = if self.artist_pictures {
-            HashSet::new()
-        } else {
-            let covers: HashSet<&PathBuf> = self.albums.iter().filter_map(|a| a.cover.as_ref()).collect();
-            self.artist_photos.values().filter(|p| !covers.contains(p)).cloned().collect()
-        };
+        // Pictures that scrolled away (or whose page was left) meanwhile are dropped.
+        let wanted: HashSet<PathBuf> = self.wanted_thumbs().into_iter().collect();
         for (path, pixels) in done {
             self.thumb_queued.remove(&path);
-            if unwanted.contains(&path) {
+            if !wanted.contains(&path) {
                 continue;
             }
             let img = pixels.map(Image::from_rgba8);
@@ -1340,7 +1473,7 @@ impl App {
             ui.set_albums_filtered(self.artist_filter.is_some());
             ui.set_albums_title(self.artist_filter.clone().unwrap_or_else(|| "Albums".into()).into());
         }
-        self.load_thumbs();
+        self.sync_thumbs();
         self.find_artist_photos();
     }
 
@@ -1650,9 +1783,7 @@ impl App {
     }
 
     fn artist_item(&mut self, a: &Artist) -> ArtistItem {
-        // Pictures cost memory, so they load only once the page is opened.
-        let (image, has_image) =
-            if self.artist_pictures { self.thumb(&self.artist_picture(a)) } else { (Image::default(), false) };
+        let (image, has_image) = self.thumb(&self.artist_picture(a));
         ArtistItem {
             name: a.name.as_str().into(),
             info: format!(
@@ -1689,42 +1820,20 @@ impl App {
     /// the music folders, else one downloaded earlier; then, if album art
     /// downloads are on, downloads the missing ones slowly (the photo
     /// services ask for no more than about one request a second).
-    /// Artist pictures are only kept in memory while the Artists page is shown.
+    /// Only the shown grid's pictures are kept; leaving a grid frees them.
     pub fn page_changed(&mut self, page: i32) {
+        self.page = page;
+        if page != 0 {
+            self.album_range = None;
+        }
+        if page != 1 {
+            self.artist_range = None;
+        }
+        self.artist_pictures = page == 1;
         if page == 1 {
-            self.open_artists_page();
-        } else if self.artist_pictures {
-            self.close_artists_page();
+            self.find_artist_photos();
         }
-    }
-
-    /// Leaving the Artists page: drop its pictures (artist photos that are not
-    /// also an album cover); they are decoded again when it is opened.
-    fn close_artists_page(&mut self) {
-        self.artist_pictures = false;
-        let covers: HashSet<&PathBuf> = self.albums.iter().filter_map(|a| a.cover.as_ref()).collect();
-        let photos: Vec<PathBuf> = self.artist_photos.values().filter(|p| !covers.contains(p)).cloned().collect();
-        for p in &photos {
-            self.thumbs.remove(p);
-        }
-        let items = self.artist_items();
-        if let Some(ui) = self.ui() {
-            ui.set_artists(model(items));
-        }
-    }
-
-    /// The Artists page was opened: load its pictures.
-    fn open_artists_page(&mut self) {
-        if self.artist_pictures {
-            return;
-        }
-        self.artist_pictures = true;
-        let items = self.artist_items();
-        if let Some(ui) = self.ui() {
-            ui.set_artists(model(items));
-        }
-        self.load_thumbs();
-        self.find_artist_photos();
+        self.sync_thumbs();
     }
 
     fn find_artist_photos(&mut self) {
@@ -1789,7 +1898,7 @@ impl App {
         for name in &names {
             self.refresh_artist(name);
         }
-        self.load_thumbs();
+        self.sync_thumbs();
     }
 
     /// Shows the sort menus' labels and the chosen orders.
@@ -1855,7 +1964,7 @@ impl App {
                 if let Some(ui) = self.ui() {
                     ui.set_albums(model(items));
                 }
-                self.load_thumbs();
+                self.sync_thumbs();
             }
             1 => {
                 self.sort_artists();
@@ -1863,7 +1972,7 @@ impl App {
                 if let Some(ui) = self.ui() {
                     ui.set_artists(model(items));
                 }
-                self.load_thumbs();
+                self.sync_thumbs();
             }
             _ => {
                 self.sort_songs();
@@ -1930,7 +2039,7 @@ impl App {
             ui.set_album_info(info.into());
             ui.set_album_tracks(model(tracks));
         }
-        self.load_thumbs();
+        self.sync_thumbs();
     }
 
     pub fn open_artist(&mut self, index: usize) {
@@ -4211,6 +4320,8 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_set_sort, |a, page, index| a.set_sort(page, index.max(0) as usize));
     on!(on_sort_ignore_articles_changed, |a, on| a.set_sort_ignore_articles(on));
     on!(on_page_changed, |a, page| a.page_changed(page));
+    on!(on_album_range, |a, first, last| a.set_album_range(first, last));
+    on!(on_artist_range, |a, first, last| a.set_artist_range(first, last));
     on!(on_flip_sort, |a, page| a.flip_sort(page));
     on!(on_track_menu_requested, |a, c, i| a.track_menu_requested(c, i));
     on!(on_track_menu_action, |a, action, pl| a.track_menu_action(action, pl));
