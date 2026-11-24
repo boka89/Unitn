@@ -264,6 +264,10 @@ export component AppWindow inherits Window {
     callback sort-ignore-articles-changed(bool);
     /// The page changed (the Artists page loads its pictures while shown).
     callback page-changed(int);
+    /// Albums / artists on screen in their grids (first and last index):
+    /// only their pictures are kept in memory.
+    callback album-range(int, int);
+    callback artist-range(int, int);
     changed page => { root.page-changed(root.page); }
 
     // Navigation & library
@@ -814,6 +818,7 @@ export component AppWindow inherits Window {
                             library-empty: root.library-empty;
                             scanning: root.scanning;
                             playing-album: root.playing-album;
+                            visible-range(first, last) => { root.album-range(first, last); }
                             open-album(i) => {
                                 root.open-album(i);
                                 root.page = 5;
@@ -854,6 +859,7 @@ export component AppWindow inherits Window {
                             width: parent.width;
                             height: parent.height;
                             artists: root.artists;
+                            visible-range(first, last) => { root.artist-range(first, last); }
                             open-artist(i) => {
                                 root.open-artist(i);
                                 root.page = 0;

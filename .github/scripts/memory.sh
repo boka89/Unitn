@@ -6,6 +6,11 @@
 #   2. a song playing on Now Playing with the lyrics panel open
 #   3. Artists page opened (artist pictures loaded)
 #   4. back on Now Playing (the Artists page's pictures released)
+#   5. Artists page → an artist → album → Play → Now Playing (a tester's
+#      path), right away and a minute later
+#   6. after scrolling the whole Albums grid down and up again
+#   7. after a long session: shuffle, skipping through 60 songs
+#   8. after switching the mini player on and off 30 times
 # The numbers go to the job summary. Above LIMIT_MB a warning is shown, so a
 # release that suddenly needs much more memory doesn't go unnoticed.
 set -euo pipefail
@@ -107,11 +112,39 @@ import -window root "$OUT/3-artists.png"
 click 45 776 15           # back to Now Playing
 M4=$(rss_mb)
 
+click 120 160 5           # Artists
+click 348 170 4           # first artist: their albums
+click 341 160 3           # first album
+click 524 257 4           # Play
+click 45 776 5            # Now Playing
+M5=$(rss_mb)
+sleep 60
+M6=$(rss_mb)
+
+click 120 117 3           # Albums: scroll to the end and back
+for i in $(seq 1 60); do xdotool mousemove 700 400 click 5; sleep 0.1; done
+sleep 3
+for i in $(seq 1 60); do xdotool mousemove 700 400 click 4; sleep 0.1; done
+sleep 5
+M7=$(rss_mb)
+
+click 45 776 3            # Now Playing; shuffle on, then skip 60 songs
+click 544 765 1
+xdotool windowfocus "$WID" 2>/dev/null || true
+for i in $(seq 1 60); do xdotool key ctrl+Right; sleep 2; done
+sleep 5
+M8=$(rss_mb)
+import -window root "$OUT/4-long-session.png"
+
+for i in $(seq 1 30); do xdotool key ctrl+shift+m; sleep 1; done   # ends on the full window
+sleep 5
+M9=$(rss_mb)
+
 kill $PID 2>/dev/null || true
 kill $XVFB 2>/dev/null || true
 echo "--- app log (last lines)"; tail -n 25 "$OUT/log.txt" || true
 
-echo "RESULT memory: albums ${M1} MB, now playing ${M2} MB, artists ${M3} MB, now playing again ${M4} MB"
+echo "RESULT memory: albums ${M1}, now playing ${M2}, artists ${M3}, now playing again ${M4}, via artists ${M5} / +1 min ${M6}, after scrolling ${M7}, after 60 songs ${M8}, after mini player x30 ${M9} (MB)"
 {
   echo "### Memory (4000 songs, 200 albums, 160 artists)"
   echo
@@ -121,10 +154,19 @@ echo "RESULT memory: albums ${M1} MB, now playing ${M2} MB, artists ${M3} MB, no
   echo "| Playing, Now Playing with lyrics | ${M2} MB |"
   echo "| Artists page opened | ${M3} MB |"
   echo "| Back on Now Playing | ${M4} MB |"
+  echo "| Artists → artist → album → Now Playing | ${M5} MB |"
+  echo "| … one minute later | ${M6} MB |"
+  echo "| After scrolling all albums | ${M7} MB |"
+  echo "| After 60 songs (shuffle) | ${M8} MB |"
+  echo "| After mini player on/off ×30 | ${M9} MB |"
   echo
   echo "Warning limit: ${LIMIT_MB} MB."
 } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
-max=$(printf '%s\n' "$M1" "$M2" "$M3" "$M4" | sort -n | tail -1)
+max=$(printf '%s\n' "$M1" "$M2" "$M3" "$M4" "$M5" "$M6" "$M7" "$M8" "$M9" | sort -n | tail -1)
+# Memory that keeps growing while listening is a leak.
+if [ $((M9 - M2)) -gt 60 ]; then
+  echo "::warning title=Memory::Memory grew by $((M9 - M2)) MB during the session (${M2} → ${M9} MB)"
+fi
 if [ "$max" -gt "$LIMIT_MB" ]; then
   echo "::warning title=Memory::Unitn used ${max} MB with a 4000-song library (limit ${LIMIT_MB} MB)"
 fi

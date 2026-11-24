@@ -144,6 +144,8 @@ export component AlbumsPage inherits Rectangle {
     in property <string> playing-album;
     callback open-album(int);
     callback add-folder();
+    /// The albums on screen changed (first and last index).
+    callback visible-range(int, int);
 
     // Width for the cards: 20px margins plus the scrollbar lane, so the last
     // column is never under the scrollbar.
@@ -161,6 +163,15 @@ export component AlbumsPage inherits Rectangle {
         height: parent.height;
         content-width: self.visible-width;
         content-height: Math.ceil(root.albums.length / root.cols) * root.cell-h + 32px;
+        // Which cards are on screen, reported (one row at a time) so only
+        // those pictures are kept in memory, plus a margin.
+        property <int> first-row: Math.max(0, Math.floor((-self.content-y - 8px) / root.cell-h));
+        property <int> rows-shown: Math.ceil(self.visible-height / root.cell-h) + 1;
+        property <int> first-item: self.first-row * root.cols;
+        property <int> last-item: Math.min(root.albums.length - 1, (self.first-row + self.rows-shown) * root.cols - 1);
+        init => { root.visible-range(self.first-item, self.last-item); }
+        changed first-item => { root.visible-range(self.first-item, self.last-item); }
+        changed last-item => { root.visible-range(self.first-item, self.last-item); }
         for album[i] in root.albums: AlbumCard {
             x: 20px + Math.mod(i, root.cols) * root.cell-w;
             y: 8px + Math.floor(i / root.cols) * root.cell-h;
@@ -541,6 +552,8 @@ component ArtistCard inherits Rectangle {
 export component ArtistsPage inherits Rectangle {
     in property <[ArtistItem]> artists;
     callback open-artist(int);
+    /// The artists on screen changed (first and last index).
+    callback visible-range(int, int);
 
     // The same grid as the Albums page: as many columns as fit, cards
     // grown to fill the row, clear of the scrollbar lane.
@@ -563,6 +576,15 @@ export component ArtistsPage inherits Rectangle {
         height: parent.height;
         content-width: self.visible-width;
         content-height: Math.ceil(root.artists.length / root.cols) * root.cell-h + 32px;
+        // Which cards are on screen, reported (one row at a time) so only
+        // those pictures are kept in memory, plus a margin.
+        property <int> first-row: Math.max(0, Math.floor((-self.content-y - 8px) / root.cell-h));
+        property <int> rows-shown: Math.ceil(self.visible-height / root.cell-h) + 1;
+        property <int> first-item: self.first-row * root.cols;
+        property <int> last-item: Math.min(root.artists.length - 1, (self.first-row + self.rows-shown) * root.cols - 1);
+        init => { root.visible-range(self.first-item, self.last-item); }
+        changed first-item => { root.visible-range(self.first-item, self.last-item); }
+        changed last-item => { root.visible-range(self.first-item, self.last-item); }
         for artist[i] in root.artists: ArtistCard {
             x: 20px + Math.mod(i, root.cols) * root.cell-w;
             y: 8px + Math.floor(i / root.cols) * root.cell-h;
