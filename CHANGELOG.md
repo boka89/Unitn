@@ -2,6 +2,32 @@
 
 Older versions: see the [changelog on the website](https://unitn.bokors.net/changelog/).
 
+## 0.6.7 — 2026-11-24
+
+More memory work from **@jo-el414**'s testing (#30). Thanks!
+
+### Fixed
+
+- **Memory no longer depends on the size of your library.** The Albums and Artists grids keep
+  only the pictures on screen (plus a screen's worth above and below) in memory; scrolling
+  loads and frees them, and leaving a page frees its grid. Before, every album cover in the
+  library was in memory all the time, and visiting the Artists page added every artist.
+- **Thumbnail folder**: album covers and artist photos, your own `artist.jpg` files included,
+  are saved once as small 320 px copies in a `thumbs` folder in Unitn's data folder. The grids
+  read those instead of decoding the full-size images every time.
+- Only the last three full-size images (Now Playing cover, artist photo) are kept, instead of
+  six.
+
+Measured with a 4000-song, 200-album, 160-artist test library (Linux):
+
+| | 0.6.6 | 0.6.7 |
+|---|---|---|
+| Playing on Now Playing with lyrics | 308 MB | 231 MB |
+| Artists → artist → album → Now Playing | 379 MB | 261 MB |
+| After 60 songs on shuffle | 452 MB | 305 MB |
+
+The mini player doesn't leak: switching it on and off 30 times adds about 4 MB.
+
 ## 0.6.6 — 2026-11-24
 
 From **@jo-el414**'s testing of 0.6.5 (#30). Thanks!

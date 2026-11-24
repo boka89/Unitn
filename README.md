@@ -8,7 +8,7 @@ no account and no tracking.
 
 **Website and downloads: [unitn.bokors.net](https://unitn.bokors.net)**
 
-> Status: v0.6.6 — young but usable. Feedback and contributions welcome.
+> Status: v0.6.7 — young but usable. Feedback and contributions welcome.
 
 ![Unitn playing an album, dark theme](docs/screenshots/dark-playing.png)
 
@@ -204,8 +204,9 @@ preview, install the Slint VS Code extension or `slint-viewer` and open
 | macOS   | `~/Library/Application Support/net.bokors.Unitn/` | same folder                              |
 | Windows | `%APPDATA%\bokors\Unitn\data\`                   | `%APPDATA%\bokors\Unitn\config\`        |
 
-Inside the data folder: `library.sqlite3` (the library), `covers/` (album art cache) and
-`artists/` (downloaded artist photos, named after the artist, e.g. `Daft Punk.jpg`).
+Inside the data folder: `library.sqlite3` (the library), `covers/` (album art cache),
+`artists/` (downloaded artist photos, named after the artist, e.g. `Daft Punk.jpg`) and
+`thumbs/` (small copies of covers and artist photos for the grids; safe to delete).
 Your own `artist.jpg` files stay in your music folders and are not copied.
 
 On first start, your system Music folder is added automatically.
