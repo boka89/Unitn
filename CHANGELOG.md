@@ -2,6 +2,26 @@
 
 Older versions: see the [changelog on the website](https://unitn.bokors.net/changelog/).
 
+## 0.6.6 — 2026-11-24
+
+From **@jo-el414**'s testing of 0.6.5 (#30). Thanks!
+
+### New
+
+- **Setting: "Ignore The, A and An when sorting"** (Settings, on by default). Turn it off to
+  sort names exactly as written, so *The Beatles* comes under T.
+
+### Fixed
+
+- **Memory use**: 0.6.5 decoded a picture for every artist at startup, even when the Artists
+  page was never opened, and kept every artist photo shown behind Now Playing in memory at
+  full size. Now artist pictures are only in memory while the Artists page is shown, list
+  thumbnails are smaller (320 px), and big photos are shrunk to screen size with only the last
+  few kept. With a 4000-song test library, startup memory went from 420 MB (0.6.5) to 270 MB,
+  lower than 0.6.1's 314 MB.
+- CI checks memory on every build with a 4000-song test library, so a jump like this doesn't
+  go unnoticed again.
+
 ## 0.6.5 — 2026-11-22
 
 Everything from **@jo-el414**'s latest round of testing and ideas (#24–#28). Thanks!

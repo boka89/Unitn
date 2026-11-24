@@ -1240,8 +1240,18 @@ impl App {
     /// Puts covers from the cover thread into the album grid and album page.
     fn on_thumbs(&mut self, done: Vec<(PathBuf, Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>)>) {
         let mut ready: HashSet<PathBuf> = HashSet::new();
+        // Artist photos that arrive after the Artists page was left are dropped.
+        let unwanted: HashSet<PathBuf> = if self.artist_pictures {
+            HashSet::new()
+        } else {
+            let covers: HashSet<&PathBuf> = self.albums.iter().filter_map(|a| a.cover.as_ref()).collect();
+            self.artist_photos.values().filter(|p| !covers.contains(p)).cloned().collect()
+        };
         for (path, pixels) in done {
             self.thumb_queued.remove(&path);
+            if unwanted.contains(&path) {
+                continue;
+            }
             let img = pixels.map(Image::from_rgba8);
             if img.is_some() {
                 ready.insert(path.clone());
@@ -1679,8 +1689,32 @@ impl App {
     /// the music folders, else one downloaded earlier; then, if album art
     /// downloads are on, downloads the missing ones slowly (the photo
     /// services ask for no more than about one request a second).
-    /// The Artists page was opened: load its pictures (once).
-    pub fn open_artists_page(&mut self) {
+    /// Artist pictures are only kept in memory while the Artists page is shown.
+    pub fn page_changed(&mut self, page: i32) {
+        if page == 1 {
+            self.open_artists_page();
+        } else if self.artist_pictures {
+            self.close_artists_page();
+        }
+    }
+
+    /// Leaving the Artists page: drop its pictures (artist photos that are not
+    /// also an album cover); they are decoded again when it is opened.
+    fn close_artists_page(&mut self) {
+        self.artist_pictures = false;
+        let covers: HashSet<&PathBuf> = self.albums.iter().filter_map(|a| a.cover.as_ref()).collect();
+        let photos: Vec<PathBuf> = self.artist_photos.values().filter(|p| !covers.contains(p)).cloned().collect();
+        for p in &photos {
+            self.thumbs.remove(p);
+        }
+        let items = self.artist_items();
+        if let Some(ui) = self.ui() {
+            ui.set_artists(model(items));
+        }
+    }
+
+    /// The Artists page was opened: load its pictures.
+    fn open_artists_page(&mut self) {
         if self.artist_pictures {
             return;
         }
@@ -4176,7 +4210,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_toggle_mini_lyrics, |a| a.toggle_mini_lyrics());
     on!(on_set_sort, |a, page, index| a.set_sort(page, index.max(0) as usize));
     on!(on_sort_ignore_articles_changed, |a, on| a.set_sort_ignore_articles(on));
-    on!(on_artists_opened, |a| a.open_artists_page());
+    on!(on_page_changed, |a, page| a.page_changed(page));
     on!(on_flip_sort, |a, page| a.flip_sort(page));
     on!(on_track_menu_requested, |a, c, i| a.track_menu_requested(c, i));
     on!(on_track_menu_action, |a, action, pl| a.track_menu_action(action, pl));

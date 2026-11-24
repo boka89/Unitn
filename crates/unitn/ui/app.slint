@@ -262,8 +262,9 @@ export component AppWindow inherits Window {
     /// Sorting skips a leading "The", "A" or "An".
     in-out property <bool> sort-ignore-articles: true;
     callback sort-ignore-articles-changed(bool);
-    /// The Artists page was opened (its pictures load only then).
-    callback artists-opened();
+    /// The page changed (the Artists page loads its pictures while shown).
+    callback page-changed(int);
+    changed page => { root.page-changed(root.page); }
 
     // Navigation & library
     callback open-album(int);
@@ -473,10 +474,7 @@ export component AppWindow inherits Window {
                             icon: @image-url("icons/artist.svg");
                             label: "Artists";
                             selected: root.page == 1;
-                            clicked => {
-                                root.page = 1;
-                                root.artists-opened();
-                            }
+                            clicked => { root.page = 1; }
                         }
                         NavItem {
                             icon: @image-url("icons/song.svg");

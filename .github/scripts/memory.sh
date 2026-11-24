@@ -3,8 +3,9 @@
 # artists, 200 albums, 4000 MP3s, covers and big artist.jpg photos) and
 # reports its memory (resident set size) at three points:
 #   1. library scanned, Albums page
-#   2. Artists page opened (artist pictures loaded)
-#   3. a song playing on Now Playing with the lyrics panel open
+#   2. a song playing on Now Playing with the lyrics panel open
+#   3. Artists page opened (artist pictures loaded)
+#   4. back on Now Playing (the Artists page's pictures released)
 # The numbers go to the job summary. Above LIMIT_MB a warning is shown, so a
 # release that suddenly needs much more memory doesn't go unnoticed.
 set -euo pipefail
@@ -93,34 +94,37 @@ sleep 3
 M1=$(rss_mb)
 import -window root "$OUT/1-albums.png"
 
-click 120 160 20          # Artists page: its pictures load now
-M2=$(rss_mb)
-import -window root "$OUT/2-artists.png"
-
-click 120 117 3           # Albums
 click 341 160 3           # first album
 click 524 257 4           # Play
 click 45 776 15           # Now Playing (lyrics panel is open)
+M2=$(rss_mb)
+import -window root "$OUT/2-nowplaying.png"
+
+click 120 160 20          # Artists page: its pictures load now
 M3=$(rss_mb)
-import -window root "$OUT/3-nowplaying.png"
+import -window root "$OUT/3-artists.png"
+
+click 45 776 15           # back to Now Playing
+M4=$(rss_mb)
 
 kill $PID 2>/dev/null || true
 kill $XVFB 2>/dev/null || true
 echo "--- app log (last lines)"; tail -n 25 "$OUT/log.txt" || true
 
-echo "RESULT memory: albums ${M1} MB, artists ${M2} MB, now playing ${M3} MB"
+echo "RESULT memory: albums ${M1} MB, now playing ${M2} MB, artists ${M3} MB, now playing again ${M4} MB"
 {
   echo "### Memory (4000 songs, 200 albums, 160 artists)"
   echo
   echo "| Step | Memory (RSS) |"
   echo "|---|---|"
   echo "| Library scanned, Albums | ${M1} MB |"
-  echo "| Artists page opened | ${M2} MB |"
-  echo "| Playing, Now Playing with lyrics | ${M3} MB |"
+  echo "| Playing, Now Playing with lyrics | ${M2} MB |"
+  echo "| Artists page opened | ${M3} MB |"
+  echo "| Back on Now Playing | ${M4} MB |"
   echo
   echo "Warning limit: ${LIMIT_MB} MB."
 } >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
-max=$(printf '%s\n' "$M1" "$M2" "$M3" | sort -n | tail -1)
+max=$(printf '%s\n' "$M1" "$M2" "$M3" "$M4" | sort -n | tail -1)
 if [ "$max" -gt "$LIMIT_MB" ]; then
   echo "::warning title=Memory::Unitn used ${max} MB with a 4000-song library (limit ${LIMIT_MB} MB)"
 fi
