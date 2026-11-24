@@ -8,7 +8,7 @@ no account and no tracking.
 
 **Website and downloads: [unitn.bokors.net](https://unitn.bokors.net)**
 
-> Status: v0.6.5 — young but usable. Feedback and contributions welcome.
+> Status: v0.6.6 — young but usable. Feedback and contributions welcome.
 
 ![Unitn playing an album, dark theme](docs/screenshots/dark-playing.png)
 
@@ -32,6 +32,7 @@ no account and no tracking.
 - **Sorting** on every library page, remembered: Albums by artist, title, year or recently
   added; Artists by name, most albums, most songs or recently added; Songs by artist, title,
   album, year, length, genre or recently added. Names ignore a leading "The", "A" or "An"
+  (can be turned off in Settings)
 - **Album art**: missing covers are downloaded from the free MusicBrainz / Cover Art Archive,
   and artist photos appear behind Now Playing: your own `artist.jpg` (`.png`, `.webp`) from the
   artist or album folder if you have one, otherwise a photo from Wikimedia Commons

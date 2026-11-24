@@ -259,6 +259,12 @@ export component AppWindow inherits Window {
     in property <string> log-path;
     in-out property <bool> download-art: true;
     callback download-art-changed(bool);
+    /// Sorting skips a leading "The", "A" or "An".
+    in-out property <bool> sort-ignore-articles: true;
+    callback sort-ignore-articles-changed(bool);
+    /// The page changed (the Artists page loads its pictures while shown).
+    callback page-changed(int);
+    changed page => { root.page-changed(root.page); }
 
     // Navigation & library
     callback open-album(int);
@@ -984,6 +990,11 @@ export component AppWindow inherits Window {
                             download-art-changed(on) => {
                                 root.download-art = on;
                                 root.download-art-changed(on);
+                            }
+                            sort-ignore-articles: root.sort-ignore-articles;
+                            sort-ignore-articles-changed(on) => {
+                                root.sort-ignore-articles = on;
+                                root.sort-ignore-articles-changed(on);
                             }
                             theme-selected(mode) => {
                                 root.apply-theme(mode);

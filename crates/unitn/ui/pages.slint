@@ -1260,6 +1260,8 @@ export component SettingsPage inherits Rectangle {
     in property <bool> scanning;
     in property <bool> download-art;
     callback download-art-changed(bool);
+    in property <bool> sort-ignore-articles;
+    callback sort-ignore-articles-changed(bool);
     in property <int> crossfade;
     callback crossfade-changed(int);
     in property <bool> gapless-albums;
@@ -1513,6 +1515,19 @@ export component SettingsPage inherits Rectangle {
                     }
                     Chip { text: "On"; selected: root.download-art; clicked => { root.download-art-changed(true); } }
                     Chip { text: "Off"; selected: !root.download-art; clicked => { root.download-art-changed(false); } }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "Ignore \"The\", \"A\" and \"An\" when sorting (The Beatles under B)";
+                        color: Theme.fg-muted;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    Chip { text: "On"; selected: root.sort-ignore-articles; clicked => { root.sort-ignore-articles-changed(true); } }
+                    Chip { text: "Off"; selected: !root.sort-ignore-articles; clicked => { root.sort-ignore-articles-changed(false); } }
                 }
                 HorizontalLayout {
                     alignment: start;
