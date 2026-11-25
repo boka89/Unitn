@@ -138,7 +138,7 @@ component AlbumCard inherits Rectangle {
     }
 
     DragSource {
-        enabled: root.drag-what != "";
+        allowed: root.drag-what != "";
         what: root.drag-what;
         kind: "album";
         touch := TouchArea {
@@ -258,6 +258,8 @@ export component TrackRow inherits Rectangle {
 
     /// "Cozy" rows are a desktop choice; phones always get the taller rows.
     property <bool> cozy: Theme.compact && !Theme.phone;
+    /// The pointer is over the row (desktop hover highlight).
+    property <bool> hovered: false;
 
     // Gesture state.
     property <length> drag-x: 0px;
@@ -297,7 +299,7 @@ export component TrackRow inherits Rectangle {
         border-radius: root.cozy ? 4px : 6px;
         background: root.item.selected ? (Theme.dark ? #8f72ff55 : #6a46f540)
             : root.current ? Theme.accent-soft
-            : touch.has-hover ? Theme.surface-hover
+            : root.hovered ? Theme.surface-hover
             : root.striped ? (Theme.dark ? #ffffff0a : #0000000a)
             : transparent;
         animate background { duration: 120ms; }
@@ -394,54 +396,62 @@ export component TrackRow inherits Rectangle {
         }
     }
 
-    DragSource {
-        // Phones swipe and long-press the rows instead of dragging them.
-        enabled: root.drag-what != "" && !root.gestures;
+    // Android: tap, long press and sideways swipes.
+    if root.gestures: TouchArea {
+        mouse-cursor: pointer;
+        changed has-hover => { root.hovered = self.has-hover; }
+        clicked => {
+            // A release after a swipe or a long press is not a tap (the
+            // tap may arrive before or after the release event).
+            if (root.gestures && (root.long-pressed || root.sideways || root.swiped-away)) { return; }
+            if (root.gestures && root.picking) {
+                root.toggle-selected();
+                return;
+            }
+            root.activated();
+        }
+        pointer-event(event) => {
+            if (!root.gestures) { return; }
+            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                root.long-pressed = false;
+                root.sideways = false;
+                root.swiped-away = false;
+                root.following = true;
+                root.holding = true;
+            }
+            if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                root.finish-swipe();
+            }
+        }
+        moved => {
+            if (!root.gestures || !self.pressed) { return; }
+            if (Math.abs((self.mouse-x - self.pressed-x) / 1px) > 10 || Math.abs((self.mouse-y - self.pressed-y) / 1px) > 10) {
+                root.holding = false;
+            }
+            if (!root.sideways && !root.long-pressed
+                && Math.abs((self.mouse-x - self.pressed-x) / 1px) > 12
+                && Math.abs((self.mouse-x - self.pressed-x) / 1px) > 1.5 * Math.abs((self.mouse-y - self.pressed-y) / 1px)) {
+                root.sideways = true;
+                root.swiping(true);
+            }
+            if (root.sideways) {
+                root.drag-x = Math.max(-root.width * 0.6, Math.min(root.width * 0.6, self.mouse-x - self.pressed-x));
+            }
+        }
+        changed pressed => {
+            // Taken over by scrolling, or the pointer left the window.
+            if (!self.pressed) { root.finish-swipe(); }
+        }
+    }
+
+    // Desktop: click to play, drag onto a playlist or the queue.
+    if !root.gestures: DragSource {
+        allowed: root.drag-what != "";
         what: root.drag-what;
-        touch := TouchArea {
+        TouchArea {
             mouse-cursor: pointer;
-            clicked => {
-                // A release after a swipe or a long press is not a tap (the
-                // tap may arrive before or after the release event).
-                if (root.gestures && (root.long-pressed || root.sideways || root.swiped-away)) { return; }
-                if (root.gestures && root.picking) {
-                    root.toggle-selected();
-                    return;
-                }
-                root.activated();
-            }
-            pointer-event(event) => {
-                if (!root.gestures) { return; }
-                if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
-                    root.long-pressed = false;
-                    root.sideways = false;
-                    root.swiped-away = false;
-                    root.following = true;
-                    root.holding = true;
-                }
-                if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                    root.finish-swipe();
-                }
-            }
-            moved => {
-                if (!root.gestures || !self.pressed) { return; }
-                if (Math.abs((self.mouse-x - self.pressed-x) / 1px) > 10 || Math.abs((self.mouse-y - self.pressed-y) / 1px) > 10) {
-                    root.holding = false;
-                }
-                if (!root.sideways && !root.long-pressed
-                    && Math.abs((self.mouse-x - self.pressed-x) / 1px) > 12
-                    && Math.abs((self.mouse-x - self.pressed-x) / 1px) > 1.5 * Math.abs((self.mouse-y - self.pressed-y) / 1px)) {
-                    root.sideways = true;
-                    root.swiping(true);
-                }
-                if (root.sideways) {
-                    root.drag-x = Math.max(-root.width * 0.6, Math.min(root.width * 0.6, self.mouse-x - self.pressed-x));
-                }
-            }
-            changed pressed => {
-                // Taken over by scrolling, or the pointer left the window.
-                if (!self.pressed) { root.finish-swipe(); }
-            }
+            changed has-hover => { root.hovered = self.has-hover; }
+            clicked => { root.activated(); }
         }
     }
 
@@ -605,7 +615,6 @@ export component AlbumDetailPage inherits Rectangle {
                     has-image: root.album.has-cover;
                 }
                 DragSource {
-                    enabled: !Theme.mobile;
                     what: "song:3:0";
                     kind: "album";
                     TouchArea { mouse-cursor: grab; }
@@ -780,7 +789,7 @@ component ArtistCard inherits Rectangle {
     }
 
     DragSource {
-        enabled: root.drag-what != "";
+        allowed: root.drag-what != "";
         what: root.drag-what;
         kind: "artist";
         touch := TouchArea {
@@ -2512,7 +2521,7 @@ component PodcastRow inherits Rectangle {
         background: touch.has-hover ? Theme.surface : transparent;
     }
     DragSource {
-        enabled: root.drag-what != "";
+        allowed: root.drag-what != "";
         what: root.drag-what;
         kind: "podcast";
         touch := TouchArea {
@@ -2866,7 +2875,7 @@ export struct DayBar {
 component StatCard inherits Rectangle {
     in property <StatTile> tile;
     horizontal-stretch: 1;
-    min-width: 120px;
+    min-width: Theme.phone ? 0px : 120px;
     height: 78px;
     border-radius: 14px;
     background: Theme.surface;
@@ -2892,11 +2901,26 @@ component StatCard inherits Rectangle {
     }
 }
 
+/// Phone: the stat tiles two per row.
+component StatGrid inherits Rectangle {
+    in property <[StatTile]> tiles;
+    property <length> gap: 10px;
+    property <length> tile-w: (self.width - self.gap) / 2;
+    height: Math.ceil(root.tiles.length / 2) * (78px + self.gap) - self.gap;
+    for t[i] in root.tiles: StatCard {
+        x: Math.mod(i, 2) * (root.tile-w + root.gap);
+        y: Math.floor(i / 2) * (78px + root.gap);
+        width: root.tile-w;
+        min-width: 0px;
+        tile: t;
+    }
+}
+
 component TopList inherits Rectangle {
     in property <string> title;
     in property <[StatRow]> rows;
     horizontal-stretch: 1;
-    min-width: 240px;
+    min-width: Theme.phone ? 0px : 240px;
     border-radius: 14px;
     background: Theme.surface;
     border-width: 1px;
@@ -2980,10 +3004,10 @@ export component StatisticsPage inherits Rectangle {
         content-height: content.preferred-height;
         content := VerticalLayout {
             width: scroll.visible-width;
-            padding: 24px;
+            padding: Theme.phone ? 12px : 24px;
             padding-top: 4px;
-            padding-right: 24px + Theme.scroll-gutter;
-            spacing: 16px;
+            padding-right: (Theme.phone ? 12px : 24px) + Theme.scroll-gutter;
+            spacing: Theme.phone ? 12px : 16px;
             alignment: start;
 
             HorizontalLayout {
@@ -2998,10 +3022,12 @@ export component StatisticsPage inherits Rectangle {
                 font-size: 13px;
                 wrap: word-wrap;
             }
-            HorizontalLayout {
+            if !Theme.phone: HorizontalLayout {
                 spacing: 12px;
                 for t in root.tiles: StatCard { tile: t; }
             }
+            // Phone: two tiles per row.
+            if Theme.phone: StatGrid { tiles: root.tiles; }
 
             // Listening time per day, last 30 days.
             Rectangle {
@@ -3069,17 +3095,22 @@ export component StatisticsPage inherits Rectangle {
                 }
             }
 
-            HorizontalLayout {
+            if !Theme.phone: HorizontalLayout {
                 spacing: 12px;
                 alignment: stretch;
                 TopList { title: "Top songs"; rows: root.songs; }
                 TopList { title: "Top artists"; rows: root.artists; }
             }
-            HorizontalLayout {
+            if !Theme.phone: HorizontalLayout {
                 spacing: 12px;
                 TopList { title: "Top albums"; rows: root.albums; }
                 TopList { title: "Top genres"; rows: root.genres; }
             }
+            // Phone: one list under the other.
+            if Theme.phone: TopList { title: "Top songs"; rows: root.songs; }
+            if Theme.phone: TopList { title: "Top artists"; rows: root.artists; }
+            if Theme.phone: TopList { title: "Top albums"; rows: root.albums; }
+            if Theme.phone: TopList { title: "Top genres"; rows: root.genres; }
 
             Text {
                 text: "Your library";
@@ -3087,10 +3118,11 @@ export component StatisticsPage inherits Rectangle {
                 font-size: 15px;
                 font-weight: 700;
             }
-            HorizontalLayout {
+            if !Theme.phone: HorizontalLayout {
                 spacing: 12px;
                 for t in root.library-tiles: StatCard { tile: t; }
             }
+            if Theme.phone: StatGrid { tiles: root.library-tiles; }
         }
     }
 }

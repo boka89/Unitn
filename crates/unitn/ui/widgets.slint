@@ -218,6 +218,10 @@ export global Dnd {
 export component DragSource inherits DragArea {
     in property <string> what;
     in property <string> kind: "song";
+    /// Whether this can be dragged. Never on Android: there a finger on a
+    /// card or row scrolls, swipes or long-presses instead.
+    in property <bool> allowed: true;
+    enabled: root.allowed && !Theme.mobile;
     allow-copy: true;
     data: Dnd.payload(root.what);
     drag-image: root.kind == "album" ? @image-url("icons/drag-album.svg")
