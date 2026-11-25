@@ -631,6 +631,7 @@ impl App {
             ui.set_lyrics_online(self.settings.lyrics_online);
             ui.set_startup_sound(self.settings.startup_sound);
             ui.set_resume_session(self.settings.resume_session);
+            ui.set_lyrics_autosave(self.settings.lyrics_autosave as i32);
             ui.set_lyrics_open(self.settings.lyrics_open);
             self.show_sort();
             ui.set_sort_ignore_articles(self.settings.sort_ignore_articles);
@@ -3858,9 +3859,57 @@ impl App {
         self.load_lyrics();
     }
 
+    /// The current song, if it's a file on this computer (not a server
+    /// song, a podcast episode or a radio station).
+    fn current_local_song(&self) -> Option<PathBuf> {
+        match self.current_item() {
+            Some(Item::Track(t)) if !t.is_remote() && !is_episode(t) && t.path.is_file() => Some(t.path.clone()),
+            _ => None,
+        }
+    }
+
+    /// Saves the shown lyrics with the song: `kind` 0 as a file next to it
+    /// (.lrc or .txt), 1 in the song's tags. `auto`: from the "Save lyrics
+    /// found online" setting (only a short note when it worked).
+    pub fn save_lyrics(&mut self, kind: i32, auto: bool) {
+        let (Some(song), Some(found)) = (self.current_local_song(), self.lyrics.clone()) else { return };
+        if found.instrumental || found.lines.is_empty() {
+            return;
+        }
+        let result = if kind == 0 {
+            lyrics::save_sidecar(&song, &found).map(|f| {
+                let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                format!("Lyrics saved as {name}")
+            })
+        } else {
+            lyrics::save_to_tags(&song, &found).map(|_| "Lyrics saved in the song".to_string())
+        };
+        match result {
+            Ok(msg) => {
+                log(format!("lyrics: {msg} ({})", song.display()));
+                if !auto {
+                    self.show_toast(&msg);
+                }
+            }
+            Err(e) => {
+                log(format!("lyrics: saving failed for {}: {e:#}", song.display()));
+                self.show_toast(&format!("Couldn't save the lyrics: {e}"));
+            }
+        }
+    }
+
+    pub fn set_lyrics_autosave(&mut self, value: i32) {
+        self.settings.lyrics_autosave = value.clamp(0, 3) as u8;
+        self.save_settings();
+        if let Some(ui) = self.ui() {
+            ui.set_lyrics_autosave(self.settings.lyrics_autosave as i32);
+        }
+    }
+
     fn show_lyrics(&mut self, lines: Vec<String>, synced: bool, source: &str, status: &str) {
         self.lyrics_line = None;
         if let Some(ui) = self.ui() {
+            ui.set_lyrics_can_save(false);
             ui.set_lyrics_lines(model(lines.into_iter().map(SharedString::from).collect()));
             ui.set_lyrics_synced(synced);
             ui.set_lyrics_source(source.into());
@@ -3921,6 +3970,22 @@ impl App {
                 let (synced, source) = (l.synced, l.source.clone());
                 self.lyrics = Some(l);
                 self.show_lyrics(lines, synced, &source, "");
+                // Lyrics from LRCLIB for a song on this computer can be kept with it.
+                let savable = source == "LRCLIB" && self.current_local_song().is_some();
+                if let Some(ui) = self.ui() {
+                    ui.set_lyrics_can_save(savable);
+                }
+                if savable {
+                    match self.settings.lyrics_autosave {
+                        1 => self.save_lyrics(0, true),
+                        2 => self.save_lyrics(1, true),
+                        3 => {
+                            self.save_lyrics(0, true);
+                            self.save_lyrics(1, true);
+                        }
+                        _ => {}
+                    }
+                }
             }
             None => {
                 let status = if failed {
@@ -4411,6 +4476,8 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_lyrics_online_changed, |a, on| a.set_lyrics_online(on));
     on!(on_startup_sound_changed, |a, on| a.set_startup_sound(on));
     on!(on_resume_session_changed, |a, on| a.set_resume_session(on));
+    on!(on_save_lyrics, |a, kind| a.save_lyrics(kind, false));
+    on!(on_lyrics_autosave_changed, |a, v| a.set_lyrics_autosave(v));
     on!(on_lyrics_open_changed, |a, open| a.set_lyrics_open(open));
     on!(on_podcast_subscribe, |a, i| a.podcast_subscribe(i.max(0) as usize));
     on!(on_podcast_open, |a, i| a.podcast_open(i.max(0) as usize));

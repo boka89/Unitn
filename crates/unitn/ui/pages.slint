@@ -927,6 +927,10 @@ component LyricsPanel inherits Rectangle {
     in property <bool> synced;
     in property <string> status;
     in property <string> source;
+    /// Lyrics found online for a song on this computer: they can be saved
+    /// with it (0 = as a file next to it, 1 = in the song's tags).
+    in property <bool> can-save;
+    callback save(int);
     property <length> line-h: 40px;
 
     border-radius: 16px;
@@ -1003,6 +1007,29 @@ component LyricsPanel inherits Rectangle {
         font-size: 11px;
         horizontal-alignment: right;
     }
+    // Keep online lyrics: as a file next to the song, or in the song itself.
+    if root.can-save && root.lines.length > 0: HorizontalLayout {
+        x: 12px;
+        y: parent.height - 26px;
+        height: 22px;
+        spacing: 6px;
+        for label[i] in ["Save as file", "Save in song"]: Rectangle {
+            width: save-text.preferred-width + 20px;
+            border-radius: 11px;
+            background: save-touch.has-hover ? Theme.accent : Theme.fg.transparentize(0.9);
+            save-text := Text {
+                text: label;
+                color: save-touch.has-hover ? white : Theme.fg;
+                font-size: 11px;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+            save-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.save(i); }
+            }
+        }
+    }
 }
 
 export component NowPlayingPage inherits Rectangle {
@@ -1045,6 +1072,8 @@ export component NowPlayingPage inherits Rectangle {
     in property <bool> lyrics-synced;
     in property <string> lyrics-status;
     in property <string> lyrics-source;
+    in property <bool> lyrics-can-save;
+    callback save-lyrics(int);
     callback lyrics-open-changed(bool);
     // Like: the song is in the "Likes" playlist.
     in property <bool> can-like;
@@ -1158,6 +1187,8 @@ export component NowPlayingPage inherits Rectangle {
             synced: root.lyrics-synced;
             status: root.lyrics-status;
             source: root.lyrics-source;
+            can-save: root.lyrics-can-save;
+            save(kind) => { root.save-lyrics(kind); }
         }
         if !root.lyrics-open: Rectangle {
             vertical-stretch: 1;
@@ -1290,6 +1321,8 @@ export component SettingsPage inherits Rectangle {
     callback gapless-albums-changed(bool);
     in property <bool> lyrics-online;
     callback lyrics-online-changed(bool);
+    in property <int> lyrics-autosave;
+    callback lyrics-autosave-changed(int);
     in property <bool> startup-sound;
     callback startup-sound-changed(bool);
     in property <bool> resume-session;
@@ -1456,6 +1489,22 @@ export component SettingsPage inherits Rectangle {
                     }
                     Chip { text: "On"; selected: root.lyrics-online; clicked => { root.lyrics-online-changed(true); } }
                     Chip { text: "Off"; selected: !root.lyrics-online; clicked => { root.lyrics-online-changed(false); } }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        width: 180px;
+                        text: "Save lyrics found online";
+                        color: Theme.fg-muted;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                    for label[i] in ["Off", "As file", "In song", "Both"]: Chip {
+                        text: label;
+                        selected: root.lyrics-autosave == i;
+                        clicked => { root.lyrics-autosave-changed(i); }
+                    }
                     Rectangle { horizontal-stretch: 1; }
                 }
                 HorizontalLayout {

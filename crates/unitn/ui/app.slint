@@ -313,6 +313,12 @@ export component AppWindow inherits Window {
     in property <bool> lyrics-synced;
     in property <string> lyrics-status;
     in property <string> lyrics-source;
+    /// Online lyrics of a song on this computer: they can be saved with it.
+    in property <bool> lyrics-can-save;
+    /// Save the shown lyrics: 0 as a file next to the song, 1 in its tags.
+    callback save-lyrics(int);
+    in property <int> lyrics-autosave;
+    callback lyrics-autosave-changed(int);
     callback lyrics-open-changed(bool);
     // Playback settings
     in property <int> crossfade: 0;
@@ -961,6 +967,8 @@ export component AppWindow inherits Window {
                             lyrics-synced: root.lyrics-synced;
                             lyrics-status: root.lyrics-status;
                             lyrics-source: root.lyrics-source;
+                            lyrics-can-save: root.lyrics-can-save;
+                            save-lyrics(kind) => { root.save-lyrics(kind); }
                             lyrics-open-changed(o) => { root.lyrics-open-changed(o); }
                         }
                         if root.page == 8: PlaylistPage {
@@ -1020,6 +1028,8 @@ export component AppWindow inherits Window {
                             gapless-albums-changed(on) => { root.gapless-albums-changed(on); }
                             lyrics-online: root.lyrics-online;
                             lyrics-online-changed(on) => { root.lyrics-online-changed(on); }
+                            lyrics-autosave: root.lyrics-autosave;
+                            lyrics-autosave-changed(v) => { root.lyrics-autosave-changed(v); }
                             startup-sound: root.startup-sound;
                             startup-sound-changed(on) => { root.startup-sound-changed(on); }
                             resume-session: root.resume-session;
