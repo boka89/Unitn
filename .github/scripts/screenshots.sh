@@ -200,6 +200,11 @@ run_theme() { # theme-number name
   shot "$2-songs"
   click 120 242 2          # Statistics
   shot "$2-statistics"
+  click 1110 34 1          # search box: suggestions under it
+  xdotool type --delay 60 "north"; sleep 2
+  shot "$2-search"
+  xdotool key ctrl+a BackSpace; sleep 1
+  xdotool key Escape; sleep 1
   click 200 697            # Settings (gear next to the theme switch)
   shot "$2-settings"
   if [ -f /tmp/jellyfin.json ]; then
