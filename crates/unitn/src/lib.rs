@@ -1,0 +1,523 @@
+//! The Unitn app: window, pages and glue between the UI and `unitn-core`.
+//! The desktop program (`main.rs`) and the Android library
+//! (`crates/unitn-android`) both start it from here.
+
+mod app;
+mod app_id;
+mod dialogs;
+mod glass;
+// The startup animation: its own splash window on the desktop, inside the
+// (only) window on Android.
+#[cfg(not(target_os = "android"))]
+mod intro;
+#[cfg(target_os = "android")]
+#[path = "intro_android.rs"]
+mod intro;
+// OS media keys / "Now Playing": souvlaki on the desktop, nothing yet on Android.
+#[cfg(not(target_os = "android"))]
+mod media;
+#[cfg(target_os = "android")]
+#[path = "media_android.rs"]
+mod media;
+mod settings;
+
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::{android_main, logcat, on_java_event, AndroidApp, NowPlaying, Platform};
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::mpsc;
+use std::time::Duration;
+
+use anyhow::Result;
+use slint::{ComponentHandle, Timer, TimerMode};
+use unitn_core::audio::Player;
+use unitn_core::library::Library;
+
+slint::include_modules!();
+
+/// Logs to stderr and to `unitn.log` in the data folder (recreated on each start).
+fn init_logging(path: &std::path::Path) {
+    use std::io::Write;
+    use std::sync::Mutex;
+    let file = std::fs::File::create(path).ok().map(Mutex::new);
+    let started = std::time::Instant::now();
+    unitn_core::log::set_sink(move |msg| {
+        let line = format!("[{:>8.3}] {msg}", started.elapsed().as_secs_f64());
+        // Android apps have no stderr: write to the system log (logcat) instead.
+        #[cfg(target_os = "android")]
+        android::logcat(&line);
+        #[cfg(not(target_os = "android"))]
+        eprintln!("{line}");
+        if let Some(f) = &file {
+            if let Ok(mut f) = f.lock() {
+                let _ = writeln!(f, "{line}");
+                let _ = f.flush();
+            }
+        }
+    });
+    std::panic::set_hook(Box::new(|info| {
+        let bt = std::backtrace::Backtrace::force_capture();
+        unitn_core::log::log(format!("PANIC: {info}\n{bt}"));
+        if std::thread::current().name() == Some("main") {
+            dialogs::error_box("Unitn crashed", &format!("{info}\n\nDetails are in unitn.log in the Unitn data folder."));
+        }
+    }));
+    unitn_core::log::log(format!(
+        "Unitn {} on {} {}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
+}
+
+/// Entry point of the desktop program.
+#[cfg(not(target_os = "android"))]
+pub fn main() {
+    if let Err(e) = settings::Paths::new().and_then(run) {
+        // Release builds on Windows have no console: make failures visible.
+        unitn_core::log::log(format!("fatal: {e:#}"));
+        dialogs::error_box("Unitn could not start", &format!("{e:#}\n\nDetails are in unitn.log in the Unitn data folder."));
+        std::process::exit(1);
+    }
+}
+
+fn run(paths: settings::Paths) -> Result<()> {
+    init_logging(&paths.log);
+    let settings = settings::Settings::load(&paths.settings);
+    let library = Library::open(&paths.database)?;
+
+    configure_window_style()?;
+    // Windows: the app's identity (name and icon in the media overlay), before any window exists.
+    if let Some(data_dir) = paths.database.parent() {
+        app_id::register(data_dir);
+    }
+    unitn_core::log::log("startup: creating window");
+    let ui = AppWindow::new()?;
+    if cfg!(target_os = "macos") {
+        // Our content extends under the (transparent) macOS title bar.
+        ui.set_titlebar_inset(28.0);
+    }
+    let (player, player_events) = Player::new();
+
+    let intro_enabled = std::env::var("UNITN_NO_INTRO").map_or(true, |v| v.is_empty());
+    let intro_sound = settings.startup_sound.then_some(settings.volume);
+    let (main_shown_tx, main_shown_rx) = mpsc::channel::<()>();
+
+    // Desktop: the window opens at the size and place it had when the app
+    // was closed (as the mini player if it was one), after the startup
+    // animation in its own splash window (test hook: UNITN_NO_INTRO=1 skips
+    // it).
+    #[cfg(not(target_os = "android"))]
+    let _splash = {
+        let start_maximized = restore_window(&ui, &settings);
+        let show_main = {
+            let weak = ui.as_weak();
+            move || {
+                let Some(ui) = weak.upgrade() else { return };
+                if let Err(e) = ui.show() {
+                    unitn_core::log::log(format!("startup: cannot show the window: {e}"));
+                }
+                keep_on_screen(&ui);
+                if start_maximized {
+                    ui.window().set_maximized(true);
+                }
+                unitn_core::log::log("startup: window shown");
+                let _ = main_shown_tx.send(());
+            }
+        };
+        if intro_enabled {
+            let splash = SplashWindow::new()?;
+            let _intro = intro::start(&splash, intro_sound, show_main);
+            Some(splash)
+        } else {
+            show_main();
+            None
+        }
+    };
+
+    // Android: one window that fills the screen; the startup animation plays
+    // inside it.
+    #[cfg(target_os = "android")]
+    {
+        if intro_enabled {
+            let intro = intro::start(&ui, intro_sound);
+            ui.on_intro_skip(move || intro.skip());
+        }
+        ui.show()?;
+        unitn_core::log::log("startup: window shown");
+        let _ = main_shown_tx.send(());
+    }
+
+    let (media_tx, media_rx) = mpsc::channel();
+    // Media controls are attached once the event loop runs (on Windows the
+    // native window, which they need, only exists from then on).
+    let media = media::Media::disabled();
+
+    let app = Rc::new(RefCell::new(app::App::new(
+        &ui,
+        paths.clone(),
+        settings,
+        library,
+        player,
+        player_events,
+        media,
+        media_rx,
+    )));
+    app::connect(&ui, &app);
+    // Load the library once the event loop runs, so the window (or the
+    // startup animation) shows right away.
+    {
+        let app = app.clone();
+        Timer::single_shot(Duration::ZERO, move || app.borrow_mut().start());
+    }
+
+    // Test hook: UNITN_AUTOPLAY="<file or URL>|<file or URL>|…" plays each
+    // target for a few seconds in turn.
+    let mut autoplay_timers = Vec::new();
+    if let Ok(targets) = std::env::var("UNITN_AUTOPLAY") {
+        for (i, target) in targets.split('|').filter(|t| !t.is_empty()).enumerate() {
+            let app = app.clone();
+            let target = target.to_string();
+            let timer = Timer::default();
+            timer.start(TimerMode::SingleShot, Duration::from_millis(200 + 8000 * i as u64), move || {
+                app.borrow_mut().autoplay(&target);
+            });
+            autoplay_timers.push(timer);
+        }
+    }
+
+    watch_window_events(&ui, &app);
+
+    // Media controls attach to the native window, so only once it is shown
+    // (after the startup animation).
+    let media_timer = Timer::default();
+    {
+        let app = app.clone();
+        let weak = ui.as_weak();
+        let mut attached = false;
+        media_timer.start(TimerMode::Repeated, Duration::from_millis(400), move || {
+            if attached || main_shown_rx.try_recv().is_err() {
+                return;
+            }
+            attached = true;
+            let Some(ui) = weak.upgrade() else { return };
+            let media = media::Media::new(window_handle(&ui), media_tx.clone());
+            if let Ok(mut app) = app.try_borrow_mut() {
+                app.set_media(media);
+                app.apply_glass();
+            }
+            keep_min_size(&ui);
+        });
+    }
+
+    // Pump events from the audio thread, background jobs and media keys.
+    let timer = Timer::default();
+    {
+        let app = app.clone();
+        timer.start(TimerMode::Repeated, Duration::from_millis(40), move || {
+            if let Ok(mut app) = app.try_borrow_mut() {
+                app.poll();
+            }
+        });
+    }
+
+    // Visualizer animation at ~30 fps.
+    let viz_timer = Timer::default();
+    {
+        let app = app.clone();
+        viz_timer.start(TimerMode::Repeated, Duration::from_millis(33), move || {
+            if let Ok(mut app) = app.try_borrow_mut() {
+                app.tick_visualizer();
+            }
+        });
+    }
+
+    // Android: the Back button goes one step back in the app (or leaves it
+    // open in the background), and the status bar icons follow the theme.
+    #[cfg(target_os = "android")]
+    let _android_timer = {
+        let weak = ui.as_weak();
+        let mut shown: Option<bool> = None;
+        let timer = Timer::default();
+        timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
+            let (Some(ui), Some(platform)) = (weak.upgrade(), android::platform()) else { return };
+            if android::take_back_pressed() && !ui.invoke_go_back() {
+                platform.move_to_back();
+            }
+            let dark = ui.global::<Theme>().get_dark();
+            if shown != Some(dark) {
+                shown = Some(dark);
+                platform.light_system_bars(!dark);
+            }
+        });
+        timer
+    };
+
+    unitn_core::log::log("startup: ready");
+    slint::run_event_loop()?;
+    app.borrow_mut().finish_listen();
+    app.borrow().save_session();
+    ui.hide()?;
+    app.borrow().save_settings();
+    Ok(())
+}
+
+/// Files dragged onto the window (several files arrive as separate events),
+/// and the minimum window size.
+#[cfg(not(target_os = "android"))]
+fn watch_window_events(ui: &AppWindow, app: &Rc<RefCell<app::App>>) {
+    use slint::winit_030::winit::event::WindowEvent;
+    use slint::winit_030::{WinitWindowAccessor, WinitWindowEventResult};
+    let app = app.clone();
+    let weak = ui.as_weak();
+    let dropped: Rc<RefCell<Vec<std::path::PathBuf>>> = Rc::default();
+    let timer = Rc::new(Timer::default());
+    let resize_weak = ui.as_weak();
+    let resize_app = app.clone();
+    let resize_save = Rc::new(Timer::default());
+    ui.window().on_winit_window_event(move |_, event| {
+        match event {
+            WindowEvent::Resized(_) => {
+                // Re-check after the event: the window must not get
+                // smaller than the size the player still works at.
+                let weak = resize_weak.clone();
+                let app = resize_app.clone();
+                let save_timer = resize_save.clone();
+                Timer::single_shot(Duration::ZERO, move || {
+                    if let Some(ui) = weak.upgrade() {
+                        keep_min_size(&ui);
+                        // Remember the size for the next start (not the
+                        // full-screen visualizer's).
+                        let window = ui.window();
+                        if !window.is_fullscreen() && !window.is_minimized() {
+                            let size = window.size().to_logical(window.scale_factor());
+                            if let Ok(mut app) = app.try_borrow_mut() {
+                                if ui.get_mini_player() {
+                                    app.remember_mini_width(size.width);
+                                } else {
+                                    app.remember_window(size.width, size.height, window.is_maximized());
+                                }
+                            }
+                            // Save shortly after resizing stops: quitting
+                            // with Cmd+Q on macOS skips the save at exit.
+                            let app = app.clone();
+                            save_timer.start(TimerMode::SingleShot, Duration::from_millis(800), move || {
+                                if let Ok(app) = app.try_borrow() {
+                                    app.save_settings();
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+            WindowEvent::Moved(_) => {
+                // Remember where the window (or the mini player) is.
+                let weak = resize_weak.clone();
+                let app = resize_app.clone();
+                let save_timer = resize_save.clone();
+                Timer::single_shot(Duration::ZERO, move || {
+                    let Some(ui) = weak.upgrade() else { return };
+                    let window = ui.window();
+                    if window.is_fullscreen() || window.is_minimized() || window.is_maximized() {
+                        return;
+                    }
+                    let pos = window.position();
+                    if let Ok(mut app) = app.try_borrow_mut() {
+                        app.remember_position(ui.get_mini_player(), pos.x, pos.y);
+                    }
+                    let app = app.clone();
+                    save_timer.start(TimerMode::SingleShot, Duration::from_millis(800), move || {
+                        if let Ok(app) = app.try_borrow() {
+                            app.save_settings();
+                        }
+                    });
+                });
+            }
+            WindowEvent::HoveredFile(_) => {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_drop_hover(true);
+                }
+            }
+            WindowEvent::HoveredFileCancelled => {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_drop_hover(false);
+                }
+            }
+            WindowEvent::DroppedFile(path) => {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_drop_hover(false);
+                }
+                dropped.borrow_mut().push(path.clone());
+                let (app, dropped) = (app.clone(), dropped.clone());
+                timer.start(TimerMode::SingleShot, Duration::from_millis(200), move || {
+                    let paths = std::mem::take(&mut *dropped.borrow_mut());
+                    if let Ok(mut app) = app.try_borrow_mut() {
+                        app.handle_drop(paths);
+                    }
+                });
+            }
+            _ => {}
+        }
+        WinitWindowEventResult::Propagate
+    });
+}
+
+/// Android: the window always fills the screen and nothing can be dropped on it.
+#[cfg(target_os = "android")]
+fn watch_window_events(_ui: &AppWindow, _app: &Rc<RefCell<app::App>>) {}
+
+/// Smallest window size (logical pixels) at which the sidebar, the pages
+/// and the now playing bar all still fit. Same as `min-width`/`min-height`
+/// in app.slint; set on the native window as well, because not every
+/// platform picked up the Slint value.
+const MIN_WINDOW: (f64, f64) = (960.0, 620.0);
+
+/// Mini player window: its height (plus the macOS title bar), and the
+/// narrowest and widest it may be made.
+pub(crate) const MINI_HEIGHT: f64 = 132.0;
+pub(crate) const MINI_WIDTH: (f64, f64) = (340.0, 720.0);
+pub(crate) const MINI_DEFAULT_WIDTH: f32 = 380.0;
+/// Extra height of the mini player's lyrics row.
+pub(crate) const MINI_LYRICS_HEIGHT: f64 = 34.0;
+
+/// Height of the mini player window (logical pixels).
+pub(crate) fn mini_height(ui: &AppWindow) -> f64 {
+    MINI_HEIGHT + if ui.get_mini_lyrics() { MINI_LYRICS_HEIGHT } else { 0.0 } + ui.get_titlebar_inset() as f64
+}
+
+/// Puts the window where it was when the app was closed, at that size; as
+/// the mini player if it was one. Returns whether to maximize it once shown.
+#[cfg(not(target_os = "android"))]
+fn restore_window(ui: &AppWindow, settings: &settings::Settings) -> bool {
+    let start_mini = settings.mini_player;
+    ui.set_mini_lyrics(settings.mini_lyrics);
+    let position = if start_mini {
+        ui.set_mini_player(true);
+        let width = settings.mini_width.filter(|w| w.is_finite()).unwrap_or(MINI_DEFAULT_WIDTH);
+        let width = width.clamp(MINI_WIDTH.0 as f32, MINI_WIDTH.1 as f32);
+        ui.window().set_size(slint::LogicalSize::new(width, mini_height(ui) as f32));
+        settings.mini_x.zip(settings.mini_y)
+    } else {
+        if let (Some(w), Some(h)) = (settings.window_width, settings.window_height) {
+            let (w, h) = (w.max(MIN_WINDOW.0 as f32), h.max(MIN_WINDOW.1 as f32));
+            if w.is_finite() && h.is_finite() && w < 10_000.0 && h < 10_000.0 {
+                ui.window().set_size(slint::LogicalSize::new(w, h));
+            }
+        }
+        settings.window_x.zip(settings.window_y)
+    };
+    if let Some((x, y)) = position {
+        ui.window().set_position(slint::PhysicalPosition::new(x, y));
+    }
+    settings.window_maximized && !start_mini
+}
+
+/// Android: the window always fills the screen.
+#[cfg(target_os = "android")]
+pub(crate) fn keep_on_screen(_ui: &AppWindow) {}
+
+/// Moves the window back onto a screen if its saved position is on none of
+/// them (e.g. a monitor that was unplugged). Not possible on Wayland, where
+/// apps can't see or set window positions.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn keep_on_screen(ui: &AppWindow) {
+    use slint::winit_030::winit::dpi::PhysicalPosition;
+    use slint::winit_030::WinitWindowAccessor;
+    ui.window().with_winit_window(|w| {
+        let Ok(pos) = w.outer_position() else { return };
+        let size = w.outer_size();
+        let mut monitors = w.available_monitors().peekable();
+        if monitors.peek().is_none() {
+            return;
+        }
+        // At least the top 40 px and 100 px across must be on some monitor,
+        // so the window can still be grabbed and moved.
+        let visible = monitors.any(|m| {
+            let (mp, ms) = (m.position(), m.size());
+            pos.x + 100 <= mp.x + ms.width as i32
+                && pos.x + size.width as i32 - 100 >= mp.x
+                && pos.y + 40 <= mp.y + ms.height as i32
+                && pos.y >= mp.y - 20
+        });
+        if !visible {
+            if let Some(m) = w.primary_monitor().or_else(|| w.available_monitors().next()) {
+                let mp = m.position();
+                unitn_core::log::log(format!("window: saved position {},{} is off-screen, moving it back", pos.x, pos.y));
+                w.set_outer_position(PhysicalPosition::new(mp.x + 80, mp.y + 80));
+            }
+        }
+    });
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn keep_min_size(_ui: &AppWindow) {}
+
+#[cfg(not(target_os = "android"))]
+pub(crate) fn keep_min_size(ui: &AppWindow) {
+    use slint::winit_030::winit::dpi::LogicalSize;
+    use slint::winit_030::WinitWindowAccessor;
+    // The mini player has a fixed height and a narrow width range.
+    let mini = ui.get_mini_player();
+    let mini_h = mini_height(ui);
+    let (min, max) = if mini {
+        ((MINI_WIDTH.0, mini_h), Some(LogicalSize::new(MINI_WIDTH.1, mini_h)))
+    } else {
+        (MIN_WINDOW, None)
+    };
+    ui.window().with_winit_window(|w| {
+        w.set_min_inner_size(Some(LogicalSize::new(min.0, min.1)));
+        w.set_max_inner_size(max);
+        if w.fullscreen().is_some() {
+            return;
+        }
+        let size = w.inner_size().to_logical::<f64>(w.scale_factor());
+        if size.width < min.0 - 1.0 || size.height < min.1 - 1.0 {
+            unitn_core::log::log(format!("window: {:.0}×{:.0} is below the minimum, enlarging", size.width, size.height));
+            let _ = w.request_inner_size(LogicalSize::new(size.width.max(min.0), size.height.max(min.1)));
+        }
+    });
+}
+
+/// On macOS, make the title bar transparent and let the app draw underneath
+/// it, so it always matches the theme (and the transparency setting).
+#[cfg(target_os = "macos")]
+fn configure_window_style() -> Result<()> {
+    use slint::winit_030::winit::platform::macos::WindowAttributesExtMacOS;
+    slint::BackendSelector::new()
+        .with_winit_window_attributes_hook(|attributes| {
+            attributes
+                .with_titlebar_transparent(true)
+                .with_fullsize_content_view(true)
+                .with_title_hidden(true)
+        })
+        .select()?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn configure_window_style() -> Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn window_handle(ui: &AppWindow) -> Option<*mut std::ffi::c_void> {
+    use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use slint::winit_030::WinitWindowAccessor;
+    let hwnd = ui
+        .window()
+        .with_winit_window(|w| match w.window_handle().ok()?.as_raw() {
+            RawWindowHandle::Win32(h) => Some(h.hwnd.get() as *mut std::ffi::c_void),
+            _ => None,
+        })
+        .flatten();
+    unitn_core::log::log(format!("startup: window handle {}", if hwnd.is_some() { "found" } else { "missing" }));
+    hwnd
+}
+
+#[cfg(not(target_os = "windows"))]
+fn window_handle(_ui: &AppWindow) -> Option<*mut std::ffi::c_void> {
+    None
+}

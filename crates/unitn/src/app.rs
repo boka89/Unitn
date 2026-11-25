@@ -94,10 +94,19 @@ enum Bg {
     PlexWaiting { login: u64, code: Option<String>, opened: bool },
     /// The Plex sign-in was approved in the browser; connecting to the server.
     PlexApproved { login: u64 },
+    /// Plex servers found on the network (GDM) for the Add server dialog.
+    PlexFound { request: u64, found: Vec<servers::FoundPlex> },
+    /// Progress text for a Plex sign-in that searches the network first.
+    PlexStatus { login: u64, text: String },
     /// The album list of a server arrived.
     ServerAlbums { request: u64, key: String, result: Result<Vec<ServerAlbum>, String> },
     /// A server album cover was downloaded.
-    ServerCover { request: u64, id: String, path: PathBuf },
+    /// A server album cover was downloaded (server key, album id).
+    ServerCover { key: String, id: String, path: PathBuf },
+    /// The album list of a server was fetched for the library.
+    ServerSynced { key: String, result: Result<Vec<ServerAlbum>, String> },
+    /// All songs of a server for the library, with their stream refs.
+    ServerSongs { key: String, tracks: Vec<(Track, String)> },
     /// The songs of a server album arrived.
     ServerTracks { request: u64, album: ServerAlbum, result: Result<Vec<Track>, String> },
 }
@@ -111,6 +120,32 @@ struct ServerView {
     /// The albums shown.
     shown: Vec<ServerAlbum>,
     model: Option<Rc<VecModel<AlbumItem>>>,
+}
+
+/// Which music the Music views (Song / Album / Artist) show.
+#[derive(Clone, Debug, Default, PartialEq)]
+enum MusicSource {
+    #[default]
+    All,
+    /// Only the music on this device.
+    Phone,
+    /// Only one server's (by its key).
+    Server(String),
+}
+
+/// Server albums are fetched again for the library after this long.
+const SERVER_SYNC_SECS: i64 = 12 * 60 * 60;
+
+/// At most this many server covers wait to be downloaded (about three
+/// screens of albums).
+const MAX_COVER_JOBS: usize = 36;
+
+/// Server album covers waiting to be downloaded, newest wish first, and
+/// whether a worker is downloading them.
+#[derive(Default)]
+struct CoverJobs {
+    queue: Vec<(String, String, String)>,
+    running: bool,
 }
 
 fn server_key(cfg: &ServerConfig) -> String {
@@ -142,7 +177,8 @@ struct Listen {
 }
 
 /// Statistics page.
-const PAGE_STATS: i32 = 11;
+// (11 and 12 are the phone's Playlists and Sources pages.)
+const PAGE_STATS: i32 = 13;
 /// Rows in each top list.
 const STATS_TOP: usize = 10;
 /// Days in the listening chart.
@@ -440,10 +476,27 @@ pub struct App {
     album_tracks: Vec<Track>,
     open_album: Option<Album>,
     album_from_server: bool,
+    /// The open server album was opened from the library's Albums (not a
+    /// server's own album page).
+    album_in_library: bool,
+    /// Server key of the open server album.
+    open_server_key: Option<String>,
+    /// For each of `albums`: the server and album it is, if it's on a server.
+    album_origins: Vec<Option<(String, ServerAlbum)>>,
+    albums_model: Option<Rc<VecModel<AlbumItem>>>,
+    music_source: MusicSource,
+    /// Servers whose albums are being fetched for the library.
+    server_syncing: HashSet<String>,
+    cover_jobs: Arc<std::sync::Mutex<CoverJobs>>,
+    /// Server album covers already asked for (server cover keys).
+    covers_requested: HashSet<String>,
     server: ServerView,
     server_request: Arc<AtomicU64>,
     /// Current "Sign in with Plex" attempt; bumping it cancels the old one.
     plex_login: Arc<AtomicU64>,
+    /// Current Plex network search in the Add server dialog, and its finds.
+    plex_find: u64,
+    plex_found: Vec<servers::FoundPlex>,
     /// Current library search, so late server results can be ignored.
     search_request: Arc<AtomicU64>,
     /// Lyrics of the current song, and the song they were asked for.
@@ -527,6 +580,8 @@ pub struct App {
     playlist_tracks: Vec<Track>,
     /// (context, index) of the song menu that is open.
     menu_target: (i32, i32),
+    /// Songs picked on the Songs page (long press), in the order picked.
+    song_selection: Vec<Track>,
     /// Size, maximized state and position of the full window while the mini
     /// player is shown.
     full_window: Option<(f32, f32, bool, Option<(i32, i32)>)>,
@@ -542,6 +597,9 @@ pub struct App {
     buffering_warned: bool,
     logged_second: i64,
     listen: Option<Listen>,
+    /// Android: when the session was last saved, and at which position (the
+    /// app can be closed by the system at any time, without a clean exit).
+    session_saved: (std::time::Instant, f64),
     /// Statistics page: 0 = last 30 days, 1 = all time.
     stats_period: i32,
 }
@@ -596,9 +654,19 @@ impl App {
             album_tracks: Vec::new(),
             open_album: None,
             album_from_server: false,
+            album_in_library: false,
+            open_server_key: None,
+            album_origins: Vec::new(),
+            albums_model: None,
+            music_source: MusicSource::All,
+            server_syncing: HashSet::new(),
+            cover_jobs: Arc::new(std::sync::Mutex::new(CoverJobs::default())),
+            covers_requested: HashSet::new(),
             server: ServerView::default(),
             server_request: Arc::new(AtomicU64::new(0)),
             plex_login: Arc::new(AtomicU64::new(0)),
+            plex_find: 0,
+            plex_found: Vec::new(),
             search_request: Arc::new(AtomicU64::new(0)),
             lyrics: None,
             lyrics_for: None,
@@ -662,6 +730,7 @@ impl App {
             current_playlist: None,
             playlist_tracks: Vec::new(),
             menu_target: (0, -1),
+            song_selection: Vec::new(),
             full_window: None,
             planned_next: None,
             eq_gains_model: Rc::new(VecModel::from(vec![0.0f32; 10])),
@@ -674,6 +743,7 @@ impl App {
             buffering_warned: false,
             logged_second: -1,
             listen: None,
+            session_saved: (std::time::Instant::now(), 0.0),
             stats_period: 0,
         }
     }
@@ -710,6 +780,7 @@ impl App {
             self.show_sort();
             ui.set_sort_ignore_articles(self.settings.sort_ignore_articles);
             ui.set_glass_available(crate::glass::AVAILABLE);
+            ui.global::<Theme>().set_mobile(cfg!(target_os = "android"));
             ui.set_glass(self.settings.glass && crate::glass::AVAILABLE);
             ui.global::<Theme>().set_glass(self.settings.glass && crate::glass::AVAILABLE);
             ui.global::<Theme>().set_compact(self.settings.compact_lists);
@@ -724,14 +795,7 @@ impl App {
         // "Continue where I left off": the last song, paused.
         self.restore_session();
 
-        // First run: use the OS music folder.
-        if self.library.folders().map(|f| f.is_empty()).unwrap_or(false) {
-            if let Some(music) = directories::UserDirs::new().and_then(|d| d.audio_dir().map(Path::to_path_buf)) {
-                if music.is_dir() {
-                    let _ = self.library.add_folder(&music);
-                }
-            }
-        }
+        self.add_default_folders();
 
         let t = std::time::Instant::now();
         self.reload_library();
@@ -739,6 +803,7 @@ impl App {
         self.refresh_folders();
         self.refresh_playlists();
         self.refresh_servers();
+        self.sync_servers(false);
         self.refresh_podcasts();
         self.refresh_all_podcasts();
         self.load_radio_tab(RADIO_TAB_POPULAR);
@@ -746,6 +811,29 @@ impl App {
         self.refresh_position();
         self.start_scan();
         log(format!("startup: ready in {} ms", t.elapsed().as_millis()));
+    }
+
+    /// First run: start with the OS music folder(s).
+    fn add_default_folders(&mut self) {
+        if self.library.folders().map(|f| f.is_empty()).unwrap_or(false) {
+            for music in crate::settings::default_music_folders() {
+                if music.is_dir() {
+                    let _ = self.library.add_folder(&music);
+                }
+            }
+        }
+    }
+
+    /// Android has no folder picker: ask for access to the music files
+    /// (if still missing) and scan the Music and Download folders.
+    #[cfg(target_os = "android")]
+    pub fn find_music(&mut self) {
+        if let Some(platform) = crate::android::platform() {
+            platform.request_permissions();
+        }
+        self.add_default_folders();
+        self.refresh_folders();
+        self.start_scan();
     }
 
     pub fn set_media(&mut self, media: Media) {
@@ -875,6 +963,16 @@ impl App {
 
     pub fn poll(&mut self) {
         self.tick_glass_trial();
+        // Android may end the app without warning (low memory, swiped away):
+        // keep "Continue where I left off" and the play counts up to date.
+        #[cfg(target_os = "android")]
+        {
+            let (at, position) = self.session_saved;
+            if at.elapsed() >= Duration::from_secs(10) && (self.position - position).abs() > 1.0 {
+                self.session_saved = (std::time::Instant::now(), self.position);
+                self.save_session();
+            }
+        }
         // One event at a time, so nothing is lost if handling one goes wrong.
         while let Ok(e) = self.player_events.try_recv() {
             self.on_player_event(e);
@@ -895,6 +993,16 @@ impl App {
         let keys: Vec<MediaCmd> = self.media_rx.try_iter().collect();
         for k in keys {
             self.on_media_key(k);
+        }
+        // Android: the user just allowed (or refused) access to the music.
+        #[cfg(target_os = "android")]
+        {
+            if crate::android::take_permissions_changed() {
+                log("android: permissions answered, scanning again");
+                self.add_default_folders();
+                self.refresh_folders();
+                self.start_scan();
+            }
         }
     }
 
@@ -1193,6 +1301,14 @@ impl App {
                     }
                 }
             }
+            Bg::PlexFound { request, found } => self.on_plex_found(request, found),
+            Bg::PlexStatus { login, text } => {
+                if login == self.plex_login.load(Ordering::SeqCst) {
+                    if let Some(ui) = self.ui() {
+                        ui.set_server_dialog_status(text.into());
+                    }
+                }
+            }
             Bg::ServerSearch { request, tracks } => self.on_server_search(request, tracks),
             Bg::Lyrics { track, lyrics, failed } => self.on_lyrics(track, lyrics, failed),
             Bg::PodcastResults { request, result } => self.on_podcast_results(request, result),
@@ -1205,8 +1321,13 @@ impl App {
                 match result {
                     Ok(list) => {
                         log(format!("servers: {} albums loaded", list.len()));
+                        // Also what the library knows about this server.
+                        if let Err(e) = self.library.replace_server_albums(&key, &list, unix_now()) {
+                            log(format!("servers: could not save albums: {e:#}"));
+                        }
                         self.server.cache.insert(key, list);
                         self.show_server_albums();
+                        self.reload_library();
                     }
                     Err(e) => {
                         if let Some(ui) = self.ui() {
@@ -1216,19 +1337,9 @@ impl App {
                     }
                 }
             }
-            Bg::ServerCover { request, id, path } => {
-                if request != self.server_request.load(Ordering::Relaxed) {
-                    return;
-                }
-                let (image, has) = self.cover(&Some(path));
-                if let (Some(model), Some(i)) = (&self.server.model, self.server.shown.iter().position(|a| a.id == id)) {
-                    if let Some(mut row) = model.row_data(i) {
-                        row.cover = image;
-                        row.has_cover = has;
-                        model.set_row_data(i, row);
-                    }
-                }
-            }
+            Bg::ServerCover { key, id, path } => self.on_server_cover(key, id, path),
+            Bg::ServerSynced { key, result } => self.on_server_synced(key, result),
+            Bg::ServerSongs { key, tracks } => self.on_server_songs(key, tracks),
             Bg::ServerTracks { request, album, result } => {
                 if request != self.server_request.load(Ordering::Relaxed) || !self.album_from_server {
                     return;
@@ -1309,7 +1420,12 @@ impl App {
             MediaCmd::Toggle => self.toggle_play(),
             MediaCmd::Next => self.next(false),
             MediaCmd::Previous => self.previous(),
-            MediaCmd::Stop => self.player.stop(),
+            MediaCmd::Stop => {
+                // Android: the app was swiped away; it ends right after this.
+                self.finish_listen();
+                self.save_session();
+                self.player.stop();
+            }
             MediaCmd::SeekTo(secs) => {
                 if matches!(self.current_item(), Some(Item::Track(_))) {
                     self.player.seek(secs);
@@ -1524,6 +1640,21 @@ impl App {
             year: if a.year > 0 { a.year.to_string().into() } else { SharedString::new() },
             cover,
             has_cover,
+            source: SharedString::new(),
+        }
+    }
+
+    /// Like `album_item`, but only uses a cover that is already loaded.
+    fn album_item_lazy(&self, a: &Album) -> AlbumItem {
+        let loaded = a.cover.as_ref().and_then(|p| self.covers.get(p).cloned().flatten());
+        AlbumItem {
+            key: album_key(&a.artist, &a.title).into(),
+            title: a.title.as_str().into(),
+            artist: a.artist.as_str().into(),
+            year: if a.year > 0 { a.year.to_string().into() } else { SharedString::new() },
+            has_cover: loaded.is_some(),
+            cover: loaded.unwrap_or_default(),
+            source: SharedString::new(),
         }
     }
 
@@ -1535,36 +1666,203 @@ impl App {
             artist: t.artist.as_str().into(),
             album: t.album.as_str().into(),
             duration: if t.duration_ms > 0 { format_time(t.duration_secs()).into() } else { SharedString::new() },
+            selected: false,
+        }
+    }
+
+    /// Rows of the Songs page, with the picked songs marked.
+    fn song_items(&self) -> Vec<TrackItem> {
+        self.songs
+            .iter()
+            .enumerate()
+            .map(|(i, t)| TrackItem { selected: self.is_song_selected(t), ..Self::track_item(t, (i + 1).to_string()) })
+            .collect()
+    }
+
+    fn is_song_selected(&self, t: &Track) -> bool {
+        self.song_selection.iter().any(|s| s.path == t.path)
+    }
+
+    /// Albums for the Music views: the local ones and the saved server
+    /// albums, as chosen by the source chips, the artist and the search.
+    fn library_albums(&self, artist: Option<&str>) -> Vec<(Album, Option<(String, ServerAlbum)>)> {
+        let q = Some(self.query.as_str()).filter(|q| !q.is_empty());
+        let mut out: Vec<(Album, Option<(String, ServerAlbum)>)> = Vec::new();
+        if !matches!(self.music_source, MusicSource::Server(_)) {
+            out.extend(self.library.albums_matching(artist, q).unwrap_or_default().into_iter().map(|a| (a, None)));
+        }
+        if self.music_source != MusicSource::Phone {
+            let only = match &self.music_source {
+                MusicSource::Server(k) => Some(k.as_str()),
+                _ => None,
+            };
+            let known: HashSet<String> = self.settings.servers.iter().map(server_key).collect();
+            for (key, sa) in self.library.server_albums(only, artist, q).unwrap_or_default() {
+                if !known.contains(&key) {
+                    continue;
+                }
+                let album = Album {
+                    title: sa.title.clone(),
+                    artist: sa.artist.clone(),
+                    year: sa.year,
+                    // The cover is looked up when the album scrolls into view.
+                    ..Default::default()
+                };
+                out.push((album, Some((key, sa))));
+            }
+            if only.is_none() {
+                // Local and server albums together, sorted the same way.
+                out.sort_by_cached_key(|(a, _)| (a.artist.to_lowercase(), a.year, a.title.to_lowercase()));
+            }
+        }
+        out
+    }
+
+    /// Artists for the Music views, local and from server albums.
+    fn library_artists(&self) -> Vec<Artist> {
+        let mut by_name: Vec<Artist> = Vec::new();
+        let mut index: HashMap<String, usize> = HashMap::new();
+        let mut add = |a: Artist, by_name: &mut Vec<Artist>| {
+            let k = a.name.to_lowercase();
+            match index.get(&k) {
+                Some(&i) => {
+                    by_name[i].album_count += a.album_count;
+                    by_name[i].track_count += a.track_count;
+                }
+                None => {
+                    index.insert(k, by_name.len());
+                    by_name.push(a);
+                }
+            }
+        };
+        if !matches!(self.music_source, MusicSource::Server(_)) {
+            for a in self.library.artists().unwrap_or_default() {
+                add(a, &mut by_name);
+            }
+        }
+        if self.music_source != MusicSource::Phone {
+            let only = match &self.music_source {
+                MusicSource::Server(k) => Some(k.as_str()),
+                _ => None,
+            };
+            let known: HashSet<String> = self.settings.servers.iter().map(server_key).collect();
+            let saved = self.library.server_albums(only, None, None).unwrap_or_default();
+            for (_, sa) in saved.into_iter().filter(|(k, _)| known.contains(k)) {
+                let name = if sa.artist.is_empty() { "Unknown Artist".to_string() } else { sa.artist };
+                add(Artist { name, album_count: 1, ..Default::default() }, &mut by_name);
+            }
+            by_name.sort_by_cached_key(|a| a.name.to_lowercase());
+        }
+        let q = self.query.to_lowercase();
+        if !q.is_empty() {
+            by_name.retain(|a| a.name.to_lowercase().contains(&q));
+        }
+        by_name
+    }
+
+    /// The songs for the Songs view: local ones and the saved server songs,
+    /// as chosen by the source chips and the search.
+    fn library_songs(&self) -> Vec<Track> {
+        let mut out = if matches!(self.music_source, MusicSource::Server(_)) {
+            Vec::new()
+        } else {
+            self.library.tracks(Some(&self.query)).unwrap_or_default()
+        };
+        if self.music_source == MusicSource::Phone {
+            return out;
+        }
+        let only = match &self.music_source {
+            MusicSource::Server(k) => Some(k.as_str()),
+            _ => None,
+        };
+        let configs: HashMap<String, &ServerConfig> = self.settings.servers.iter().map(|c| (server_key(c), c)).collect();
+        let q = Some(self.query.as_str()).filter(|q| !q.is_empty());
+        let saved = self.library.server_tracks(only, q).unwrap_or_default();
+        if saved.is_empty() {
+            return out;
+        }
+        for (key, mut t, stream_ref) in saved {
+            let Some(cfg) = configs.get(&key) else { continue };
+            t.stream_url = Some(servers::stream_url(cfg, &stream_ref));
+            out.push(t);
+        }
+        out.sort_by_cached_key(|t| {
+            (t.artist.to_lowercase(), t.album.to_lowercase(), t.disc_no, t.track_no, t.title.to_lowercase())
+        });
+        out
+    }
+
+    /// Name shown on a server album's cover in the library (none when only
+    /// that server is shown anyway).
+    fn source_badge(&self, origin: &Option<(String, ServerAlbum)>) -> SharedString {
+        match origin {
+            Some((key, _)) if !matches!(self.music_source, MusicSource::Server(_)) => self
+                .settings
+                .servers
+                .iter()
+                .find(|c| &server_key(c) == key)
+                .map(|c| c.kind.label().into())
+                .unwrap_or_default(),
+            _ => SharedString::new(),
         }
     }
 
     fn reload_library(&mut self) {
-        self.albums = self.library.albums(self.artist_filter.as_deref()).unwrap_or_default();
-        if self.albums.is_empty() && self.artist_filter.is_some() {
+        let mut entries = self.library_albums(self.artist_filter.as_deref());
+        if entries.is_empty() && self.artist_filter.is_some() && self.query.is_empty() {
             self.artist_filter = None;
-            self.albums = self.library.albums(None).unwrap_or_default();
+            entries = self.library_albums(None);
         }
-        self.artists = self.library.artists().unwrap_or_default();
-        self.songs = self.library.tracks(Some(&self.query)).unwrap_or_default();
-        let count = self.library.track_count().unwrap_or(0);
-        self.sort_albums();
+        self.artists = self.library_artists();
+        self.songs = self.library_songs();
+        // "Your library is empty" (with the way to add music) only when the
+        // chosen source has nothing at all.
+        let local = self.library.track_count().unwrap_or(0);
+        let count = match &self.music_source {
+            MusicSource::Phone => local,
+            MusicSource::Server(_) => 1,
+            MusicSource::All => local + self.library.server_albums(None, None, None).map(|v| v.len() as u64).unwrap_or(0),
+        };
+        // Sorted as chosen with the Sort buttons; a server album stays with
+        // where it comes from.
+        {
+            let s = &self.settings;
+            unitn_core::sort::sort_albums_by(&mut entries, |(a, _)| a, s.album_sort, s.album_sort_reversed, s.sort_ignore_articles);
+        }
         self.sort_artists();
         self.sort_songs();
 
-        let albums = self.albums.clone();
-        let album_items: Vec<AlbumItem> = albums.iter().map(|a| self.album_item(a)).collect();
+        let (albums, origins): (Vec<Album>, Vec<_>) = entries.into_iter().unzip();
+        self.albums = albums;
+        self.album_origins = origins;
+        let (albums, origins) = (self.albums.clone(), self.album_origins.clone());
+        let album_items: Vec<AlbumItem> = albums
+            .iter()
+            .zip(origins.iter())
+            .map(|(a, origin)| {
+                // Covers are loaded for what is on screen (see `sync_thumbs`
+                // and, for server albums, `albums_visible`).
+                let mut item = self.album_item(a);
+                item.source = self.source_badge(origin);
+                item
+            })
+            .collect();
         let artist_items = self.artist_items();
-        let song_items: Vec<TrackItem> =
-            self.songs.iter().enumerate().map(|(i, t)| Self::track_item(t, (i + 1).to_string())).collect();
+        let song_items = self.song_items();
+        let albums_model = Rc::new(VecModel::from(album_items));
+        self.albums_model = Some(albums_model.clone());
 
         if let Some(ui) = self.ui() {
-            ui.set_albums(model(album_items));
+            ui.set_albums(ModelRc::from(albums_model));
             ui.set_artists(model(artist_items));
             ui.set_songs(model(song_items));
             ui.set_library_empty(count == 0);
             ui.set_albums_filtered(self.artist_filter.is_some());
             ui.set_albums_title(self.artist_filter.clone().unwrap_or_else(|| "Albums".into()).into());
         }
+        self.refresh_source_chips();
+        // The first screenful of covers; the rest follow the scrolling.
+        self.albums_visible(0, 23);
         self.sync_thumbs();
         self.find_artist_photos();
     }
@@ -1823,20 +2121,27 @@ impl App {
 
     pub fn search_library(&mut self, query: &str) {
         self.query = query.trim().to_string();
-        self.songs = self.library.tracks(Some(&self.query)).unwrap_or_default();
-        self.sort_songs();
-        self.show_songs();
+        self.reload_library();
         if let Some(ui) = self.ui() {
             ui.set_library_query(self.query.as_str().into());
         }
         // Also search the connected music servers; their songs are added
         // below the local ones when they arrive.
         let request = self.search_request.fetch_add(1, Ordering::SeqCst) + 1;
-        if self.query.chars().count() < 2 || self.settings.servers.is_empty() {
+        // Servers whose songs are saved are searched locally already; ask
+        // only the others (not synced yet).
+        let servers: Vec<ServerConfig> = match &self.music_source {
+            MusicSource::Phone => Vec::new(),
+            MusicSource::All => self.settings.servers.clone(),
+            MusicSource::Server(k) => self.settings.servers.iter().filter(|c| &server_key(c) == k).cloned().collect(),
+        }
+        .into_iter()
+        .filter(|c| !self.library.server_has_tracks(&server_key(c)).unwrap_or(false))
+        .collect();
+        if self.query.chars().count() < 2 || servers.is_empty() {
             return;
         }
-        let (servers, query, tx, current) =
-            (self.settings.servers.clone(), self.query.clone(), self.bg_tx.clone(), self.search_request.clone());
+        let (query, tx, current) = (self.query.clone(), self.bg_tx.clone(), self.search_request.clone());
         thread::spawn(move || {
             let mut tracks = Vec::new();
             for cfg in &servers {
@@ -2077,8 +2382,7 @@ impl App {
     }
 
     fn show_songs(&mut self) {
-        let items: Vec<TrackItem> =
-            self.songs.iter().enumerate().map(|(i, t)| Self::track_item(t, (i + 1).to_string())).collect();
+        let items = self.song_items();
         if let Some(ui) = self.ui() {
             ui.set_songs(model(items));
         }
@@ -2088,13 +2392,20 @@ impl App {
         if request != self.search_request.load(Ordering::SeqCst) || tracks.is_empty() {
             return;
         }
-        self.songs = self.library.tracks(Some(&self.query)).unwrap_or_default();
-        self.songs.extend(tracks);
+        // Saved songs are already listed; add only what is new.
+        let known: HashSet<PathBuf> = self.songs.iter().map(|t| t.path.clone()).collect();
+        self.songs.extend(tracks.into_iter().filter(|t| !known.contains(&t.path)));
         self.sort_songs();
         self.show_songs();
     }
 
     pub fn open_album(&mut self, index: usize) {
+        if let Some(Some((key, sa))) = self.album_origins.get(index).cloned() {
+            if let Some(cfg) = self.settings.servers.iter().find(|c| server_key(c) == key).cloned() {
+                self.load_server_album(cfg, sa, true);
+            }
+            return;
+        }
         let Some(album) = self.albums.get(index).cloned() else { return };
         self.show_album(album);
     }
@@ -2107,8 +2418,14 @@ impl App {
 
     fn set_album_from_server(&mut self, remote: bool) {
         self.album_from_server = remote;
+        if !remote {
+            self.album_in_library = false;
+            self.open_server_key = None;
+        }
+        let in_library = self.album_in_library;
         if let Some(ui) = self.ui() {
             ui.set_album_from_server(remote);
+            ui.set_album_in_library(in_library);
         }
     }
 
@@ -2458,6 +2775,7 @@ impl App {
             ui.set_servers(model(items));
             ui.set_current_server(self.server.index.map(|i| i as i32).unwrap_or(-1));
         }
+        self.refresh_source_chips();
     }
 
     pub fn connect_server(&mut self, kind: i32, url: String, user: String, secret: String) {
@@ -2492,26 +2810,68 @@ impl App {
         let login = self.plex_login.fetch_add(1, Ordering::SeqCst) + 1;
         if let Some(ui) = self.ui() {
             ui.set_server_connecting(true);
-            ui.set_server_dialog_status("Opening the Plex sign-in page…".into());
+            let status = if url.trim().is_empty() { "Opening the Plex sign-in page…" } else { "Connecting to Plex…" };
+            ui.set_server_dialog_status(status.into());
         }
         let (tx, current) = (self.bg_tx.clone(), self.plex_login.clone());
         thread::spawn(move || {
             let alive = || current.load(Ordering::SeqCst) == login;
             let result = (|| -> anyhow::Result<Option<ServerConfig>> {
+                // With an address, first try without signing in: Plex can let
+                // the home network in without one.
+                let mut url = url;
+                let candidates = if url.trim().is_empty() {
+                    // No address: look on the local network first (GDM).
+                    let _ = tx.send(Bg::PlexStatus { login, text: "Looking for Plex servers on your network…".into() });
+                    servers::plex_discover(Duration::from_secs(3)).into_iter().map(|f| f.url).collect()
+                } else {
+                    vec![url.clone()]
+                };
+                for candidate in &candidates {
+                    if !alive() {
+                        return Ok(None);
+                    }
+                    match servers::plex_connect_open(candidate) {
+                        Ok(cfg) => {
+                            log("servers: Plex lets us in without signing in");
+                            return Ok(Some(cfg));
+                        }
+                        Err(e) => log(format!("servers: Plex without sign-in at {candidate}: {e:#}")),
+                    }
+                }
+                if !alive() {
+                    return Ok(None);
+                }
+                // Signing in is needed: use the server found nearby, if any.
+                if url.trim().is_empty() {
+                    if let Some(first) = candidates.first() {
+                        url = first.clone();
+                    }
+                }
                 let pin = servers::plex_pin_start()?;
                 let opened = open_in_browser(&pin.auth_url);
                 let _ = tx.send(Bg::PlexWaiting { login, code: pin.link_code.clone(), opened });
                 let deadline = std::time::Instant::now() + Duration::from_secs(15 * 60);
+                let mut last_err = None;
                 let token = loop {
                     thread::sleep(Duration::from_secs(2));
                     if !alive() {
                         return Ok(None);
                     }
                     if std::time::Instant::now() > deadline {
-                        anyhow::bail!("The Plex sign-in timed out. Please try again.");
+                        return Err(last_err.unwrap_or_else(|| anyhow::anyhow!("The Plex sign-in timed out. Please try again.")));
                     }
-                    if let Some(token) = servers::plex_pin_token(&pin)? {
-                        break token;
+                    match servers::plex_pin_token(&pin) {
+                        Ok(Some(token)) => break token,
+                        Ok(None) => {}
+                        Err(e) if e.to_string().contains("expired") => return Err(e),
+                        // While the browser is in front, Android may cut this
+                        // app off the network (data saver, battery saving):
+                        // keep asking until the user comes back.
+                        Err(e) => {
+                            log(format!("servers: Plex sign-in check failed, retrying: {e:#}"));
+                            last_err = Some(e);
+                        }
                     }
                 };
                 log("servers: Plex sign-in approved, connecting");
@@ -2553,10 +2913,54 @@ impl App {
     /// The "Add server" dialog was closed: stop waiting for a Plex sign-in.
     pub fn close_server_dialog(&mut self) {
         self.plex_login.fetch_add(1, Ordering::SeqCst);
+        self.plex_find += 1;
+        self.plex_found.clear();
         if let Some(ui) = self.ui() {
+            ui.set_plex_searching(false);
+            ui.set_plex_found(ModelRc::new(VecModel::from(Vec::<SharedString>::new())));
+            ui.set_server_url_text(SharedString::new());
             ui.set_server_dialog(false);
             ui.set_server_connecting(false);
             ui.set_server_dialog_status(SharedString::new());
+        }
+    }
+
+    /// The Add server dialog switched to Plex: look for servers on the
+    /// network in the background. The address box stays usable meanwhile.
+    pub fn find_plex(&mut self) {
+        self.plex_find += 1;
+        let request = self.plex_find;
+        if let Some(ui) = self.ui() {
+            ui.set_plex_searching(true);
+        }
+        let tx = self.bg_tx.clone();
+        thread::spawn(move || {
+            let found = servers::plex_discover(Duration::from_secs(4));
+            let _ = tx.send(Bg::PlexFound { request, found });
+        });
+    }
+
+    fn on_plex_found(&mut self, request: u64, found: Vec<servers::FoundPlex>) {
+        if request != self.plex_find {
+            return;
+        }
+        let Some(ui) = self.ui() else { return };
+        ui.set_plex_searching(false);
+        let labels: Vec<SharedString> = found
+            .iter()
+            .map(|f| format!("{} · {}", f.name, f.url.trim_start_matches("http://")).into())
+            .collect();
+        ui.set_plex_found(ModelRc::new(VecModel::from(labels)));
+        // One server and nothing typed yet: fill it in.
+        if found.len() == 1 && ui.get_server_url_text().trim().is_empty() {
+            ui.set_server_url_text(found[0].url.clone().into());
+        }
+        self.plex_found = found;
+    }
+
+    pub fn pick_plex(&mut self, i: usize) {
+        if let (Some(f), Some(ui)) = (self.plex_found.get(i), self.ui()) {
+            ui.set_server_url_text(f.url.clone().into());
         }
     }
 
@@ -2603,6 +3007,19 @@ impl App {
         }
         let removed = self.settings.servers.remove(index);
         self.server.cache.remove(&server_key(&removed));
+        if let Err(e) = self.library.forget_server(&server_key(&removed)) {
+            log(format!("servers: could not forget albums: {e:#}"));
+        }
+        if self.music_source == MusicSource::Server(server_key(&removed)) {
+            self.music_source = MusicSource::All;
+        }
+        if self.album_from_server && self.open_server_key.as_deref() == Some(server_key(&removed).as_str()) {
+            if let Some(ui) = self.ui() {
+                if ui.get_page() == 5 {
+                    ui.set_page(0);
+                }
+            }
+        }
         match self.server.index {
             Some(i) if i == index => {
                 self.server.index = None;
@@ -2617,6 +3034,7 @@ impl App {
         }
         self.save_settings();
         self.refresh_servers();
+        self.reload_library();
         self.show_toast(&format!("Removed {}", removed.name));
     }
 
@@ -2627,7 +3045,17 @@ impl App {
             ui.set_server_name(cfg.name.as_str().into());
             ui.set_current_server(index as i32);
         }
-        if self.server.cache.contains_key(&server_key(&cfg)) {
+        let key = server_key(&cfg);
+        if !self.server.cache.contains_key(&key) && self.library.server_synced(&key).ok().flatten().is_some() {
+            // What the library saved, sorted like the server sends it.
+            let mut saved: Vec<ServerAlbum> =
+                self.library.server_albums(Some(&key), None, None).unwrap_or_default().into_iter().map(|(_, a)| a).collect();
+            if !saved.is_empty() {
+                saved.sort_by_cached_key(|a| (a.artist.to_lowercase(), a.title.to_lowercase()));
+                self.server.cache.insert(key.clone(), saved);
+            }
+        }
+        if self.server.cache.contains_key(&key) {
             self.show_server_albums();
         } else {
             self.load_server_albums(cfg);
@@ -2659,68 +3087,291 @@ impl App {
         });
     }
 
-    /// Shows the albums of the open server and fetches missing covers.
+    /// Shows the albums of the open server; covers follow the scrolling.
     fn show_server_albums(&mut self) {
         let Some(cfg) = self.server.index.and_then(|i| self.settings.servers.get(i)).cloned() else { return };
         let key = server_key(&cfg);
         let all = self.server.cache.get(&key).cloned().unwrap_or_default();
-        self.server.shown = all.clone();
-        let covers_dir = self.paths.covers.join("servers");
-        let mut missing = Vec::new();
-        let items: Vec<AlbumItem> = self
-            .server
-            .shown
-            .clone()
+        let items: Vec<AlbumItem> = all
             .iter()
             .map(|a| {
-                let cached = scanner::cached_cover(&covers_dir, &server_cover_key(&key, &a.id));
-                if cached.is_none() {
-                    if let Some(url) = &a.image_url {
-                        missing.push((a.id.clone(), url.clone()));
-                    }
-                }
-                let (cover, has_cover) = self.cover(&cached);
-                AlbumItem {
-                    key: album_key(&a.artist, &a.title).into(),
-                    title: a.title.as_str().into(),
-                    artist: a.artist.as_str().into(),
-                    year: if a.year > 0 { a.year.to_string().into() } else { SharedString::new() },
-                    cover,
-                    has_cover,
-                }
+                let album = Album {
+                    title: a.title.clone(),
+                    artist: a.artist.clone(),
+                    year: a.year,
+                    ..Default::default()
+                };
+                self.album_item_lazy(&album)
             })
             .collect();
+        self.server.shown = all;
         let model = Rc::new(VecModel::from(items));
         self.server.model = Some(model.clone());
-        let status = plural(all.len(), "album", "albums");
+        let status = plural(self.server.shown.len(), "album", "albums");
         if let Some(ui) = self.ui() {
             ui.set_server_albums(ModelRc::from(model));
             ui.set_server_loading(false);
             ui.set_server_status(status.into());
         }
-        if missing.is_empty() {
+        self.server_albums_visible(0, 23);
+    }
+
+    // ------------------------------------------------------------------
+    // Server albums in the library, and their covers
+    // ------------------------------------------------------------------
+
+    /// Fetches the album lists of the servers for the library: all of them
+    /// (`force`), or those not fetched for a while.
+    pub fn sync_servers(&mut self, force: bool) {
+        let now = unix_now();
+        for cfg in self.settings.servers.clone() {
+            let key = server_key(&cfg);
+            // Songs came later than albums: fetch servers without them too.
+            let fresh = self.library.server_synced(&key).ok().flatten().is_some_and(|t| now - t < SERVER_SYNC_SECS)
+                && self.library.server_has_tracks(&key).unwrap_or(false);
+            if (fresh && !force) || self.server_syncing.contains(&key) {
+                continue;
+            }
+            self.server_syncing.insert(key.clone());
+            let tx = self.bg_tx.clone();
+            thread::spawn(move || {
+                let result = servers::albums(&cfg).map_err(|e| {
+                    log(format!("servers: library sync of {} failed: {e:#}", cfg.name));
+                    format!("{e:#}")
+                });
+                let albums = result.as_ref().ok().cloned();
+                let _ = tx.send(Bg::ServerSynced { key: key.clone(), result });
+                // Then the songs, so they can be searched and listed offline.
+                let Some(albums) = albums else { return };
+                match servers::all_tracks(&cfg, &albums) {
+                    Ok(list) => {
+                        let tracks = list
+                            .into_iter()
+                            .filter_map(|t| {
+                                let r = servers::stream_ref(&cfg, t.stream_url.as_deref()?)?;
+                                Some((Track { stream_url: None, ..t }, r))
+                            })
+                            .collect();
+                        let _ = tx.send(Bg::ServerSongs { key, tracks });
+                    }
+                    Err(e) => log(format!("servers: song list of {} failed: {e:#}", cfg.name)),
+                }
+            });
+        }
+    }
+
+    fn on_server_songs(&mut self, key: String, tracks: Vec<(Track, String)>) {
+        if !self.settings.servers.iter().any(|c| server_key(c) == key) {
+            return; // removed meanwhile
+        }
+        log(format!("servers: library has {} songs from {key}", tracks.len()));
+        if let Err(e) = self.library.replace_server_tracks(&key, &tracks) {
+            log(format!("servers: could not save songs: {e:#}"));
             return;
         }
-        // Covers, one at a time; a newer request (refresh, other server) stops this.
-        let request = self.server_request.load(Ordering::Relaxed);
-        let (current, tx) = (self.server_request.clone(), self.bg_tx.clone());
+        self.reload_library();
+    }
+
+    fn on_server_synced(&mut self, key: String, result: Result<Vec<ServerAlbum>, String>) {
+        self.server_syncing.remove(&key);
+        let Ok(list) = result else { return };
+        if !self.settings.servers.iter().any(|c| server_key(c) == key) {
+            return; // removed meanwhile
+        }
+        log(format!("servers: library has {} albums from {key}", list.len()));
+        if let Err(e) = self.library.replace_server_albums(&key, &list, unix_now()) {
+            log(format!("servers: could not save albums: {e:#}"));
+            return;
+        }
+        self.server.cache.insert(key, list);
+        self.reload_library();
+    }
+
+    /// The library's album covers from `first` to `last` are on screen:
+    /// shows the server covers that are saved and fetches missing ones.
+    pub fn albums_visible(&mut self, first: usize, last: usize) {
+        let Some(model) = self.albums_model.clone() else { return };
+        let end = last.min(self.album_origins.len().saturating_sub(1));
+        let mut found_any = false;
+        for i in first..=end {
+            let Some(Some((key, sa))) = self.album_origins.get(i).cloned() else { continue };
+            if self.albums.get(i).is_some_and(|a| a.cover.is_some()) {
+                continue;
+            }
+            match scanner::cached_cover(&self.paths.covers.join("servers"), &server_cover_key(&key, &sa.id)) {
+                // Saved before: shown as a small copy like every other cover
+                // on screen (see `sync_thumbs`).
+                Some(c) => {
+                    if let Some(album) = self.albums.get_mut(i) {
+                        album.cover = Some(c);
+                        found_any = true;
+                    }
+                }
+                None => self.show_or_fetch_cover(&model, i, &key, &sa, None),
+            }
+        }
+        if found_any {
+            self.sync_thumbs();
+        }
+    }
+
+    /// Same for the albums page of one server.
+    pub fn server_albums_visible(&mut self, first: usize, last: usize) {
+        let Some(model) = self.server.model.clone() else { return };
+        let Some(key) = self.server.index.and_then(|i| self.settings.servers.get(i)).map(server_key) else { return };
+        let covers_dir = self.paths.covers.join("servers");
+        let end = last.min(self.server.shown.len().saturating_sub(1));
+        for i in first..=end {
+            let Some(sa) = self.server.shown.get(i).cloned() else { continue };
+            let cover = scanner::cached_cover(&covers_dir, &server_cover_key(&key, &sa.id));
+            self.show_or_fetch_cover(&model, i, &key, &sa, cover);
+        }
+    }
+
+    fn show_or_fetch_cover(
+        &mut self,
+        model: &Rc<VecModel<AlbumItem>>,
+        row: usize,
+        key: &str,
+        sa: &ServerAlbum,
+        cover: Option<PathBuf>,
+    ) {
+        let Some(mut item) = model.row_data(row) else { return };
+        if item.has_cover {
+            return;
+        }
+        if cover.is_some() {
+            let (image, has) = self.cover(&cover);
+            if has {
+                item.cover = image;
+                item.has_cover = true;
+                model.set_row_data(row, item);
+            }
+            return;
+        }
+        let Some(url) = sa.image_url.clone() else { return };
+        let cover_key = server_cover_key(key, &sa.id);
+        if !self.covers_requested.insert(cover_key) {
+            return;
+        }
+        let (start, dropped) = {
+            let mut jobs = self.cover_jobs.lock().unwrap();
+            jobs.queue.push((key.to_string(), sa.id.clone(), url));
+            // Covers scrolled past long ago wait for the next time they show.
+            let extra = jobs.queue.len().saturating_sub(MAX_COVER_JOBS);
+            let dropped: Vec<_> = jobs.queue.drain(..extra).collect();
+            (!std::mem::replace(&mut jobs.running, true), dropped)
+        };
+        for (k, id, _) in dropped {
+            self.covers_requested.remove(&server_cover_key(&k, &id));
+        }
+        if start {
+            self.start_cover_worker();
+        }
+    }
+
+    /// Downloads queued covers one at a time, the latest wish first (what
+    /// was scrolled to last), until the queue is empty.
+    fn start_cover_worker(&self) {
+        let (jobs, tx) = (self.cover_jobs.clone(), self.bg_tx.clone());
+        let covers_dir = self.paths.covers.join("servers");
         thread::spawn(move || {
             let _ = std::fs::create_dir_all(&covers_dir);
-            let mut failures = 0;
-            for (id, url) in missing {
-                if current.load(Ordering::Relaxed) != request || failures >= 5 {
-                    return;
-                }
+            loop {
+                let next = {
+                    let mut j = jobs.lock().unwrap();
+                    match j.queue.pop() {
+                        Some(job) => job,
+                        None => {
+                            j.running = false;
+                            return;
+                        }
+                    }
+                };
+                let (key, id, url) = next;
                 match servers::fetch_image(&url) {
                     Ok(data) => {
                         if let Some(path) = scanner::save_cover(&data, &covers_dir, &server_cover_key(&key, &id)) {
-                            let _ = tx.send(Bg::ServerCover { request, id, path });
+                            let _ = tx.send(Bg::ServerCover { key, id, path });
                         }
                     }
-                    Err(_) => failures += 1,
+                    Err(e) => log(format!("servers: cover of {id} failed: {e:#}")),
                 }
             }
         });
+    }
+
+    fn on_server_cover(&mut self, key: String, id: String, path: PathBuf) {
+        // In the library grid the cover is shown as a small copy, like every
+        // other cover on screen (see `sync_thumbs`).
+        let mut in_library = false;
+        for (i, o) in self.album_origins.iter().enumerate() {
+            if matches!(o, Some((k, a)) if *k == key && a.id == id) {
+                if let Some(album) = self.albums.get_mut(i) {
+                    album.cover = Some(path.clone());
+                    in_library = true;
+                }
+            }
+        }
+        if in_library {
+            self.sync_thumbs();
+        }
+        // The server's own page.
+        let open = self.server.index.and_then(|i| self.settings.servers.get(i)).map(server_key);
+        if let (Some(model), Some(true)) = (self.server.model.clone(), open.map(|k| k == key)) {
+            if let Some(i) = self.server.shown.iter().position(|a| a.id == id) {
+                let (image, has) = self.cover(&Some(path));
+                if let (true, Some(mut row)) = (has, model.row_data(i)) {
+                    row.cover = image;
+                    row.has_cover = true;
+                    model.set_row_data(i, row);
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Source chips (All / Phone / each server)
+    // ------------------------------------------------------------------
+
+    fn refresh_source_chips(&mut self) {
+        let names: Vec<SharedString> = self.settings.servers.iter().map(|c| SharedString::from(c.name.as_str())).collect();
+        let selected = match &self.music_source {
+            MusicSource::All => 0,
+            MusicSource::Phone => 1,
+            MusicSource::Server(k) => {
+                self.settings.servers.iter().position(|c| &server_key(c) == k).map(|i| i as i32 + 2).unwrap_or(0)
+            }
+        };
+        let server_name = match &self.music_source {
+            MusicSource::Server(k) => {
+                self.settings.servers.iter().find(|c| &server_key(c) == k).map(|c| c.name.clone()).unwrap_or_default()
+            }
+            _ => String::new(),
+        };
+        if let Some(ui) = self.ui() {
+            ui.set_source_names(model(names));
+            ui.set_source_selected(selected);
+            ui.set_source_server_name(server_name.into());
+        }
+    }
+
+    /// A source chip was tapped: 0 = all, 1 = this device, 2.. = a server.
+    pub fn select_source(&mut self, index: i32) {
+        let source = match index {
+            0 => MusicSource::All,
+            1 => MusicSource::Phone,
+            i => match self.settings.servers.get((i - 2) as usize) {
+                Some(c) => MusicSource::Server(server_key(c)),
+                None => MusicSource::All,
+            },
+        };
+        if source == self.music_source {
+            return;
+        }
+        self.music_source = source;
+        let query = self.query.clone();
+        self.search_library(&query);
     }
 
     /// The album header for a server album (with its cached cover).
@@ -2737,13 +3388,21 @@ impl App {
     }
 
     fn server_cover_of(&self, album: &ServerAlbum) -> Option<PathBuf> {
-        let cfg = self.server.index.and_then(|i| self.settings.servers.get(i))?;
-        scanner::cached_cover(&self.paths.covers.join("servers"), &server_cover_key(&server_key(cfg), &album.id))
+        let key = self.open_server_key.as_ref()?;
+        scanner::cached_cover(&self.paths.covers.join("servers"), &server_cover_key(key, &album.id))
     }
 
     pub fn open_server_album(&mut self, index: usize) {
         let Some(album) = self.server.shown.get(index).cloned() else { return };
         let Some(cfg) = self.server.index.and_then(|i| self.settings.servers.get(i)).cloned() else { return };
+        self.load_server_album(cfg, album, false);
+    }
+
+    /// Opens a server album and fetches its songs. `in_library`: opened
+    /// from the library's Albums (Back returns there).
+    fn load_server_album(&mut self, cfg: ServerConfig, album: ServerAlbum, in_library: bool) {
+        self.album_in_library = in_library;
+        self.open_server_key = Some(server_key(&cfg));
         self.set_album_from_server(true);
         let header = self.server_album(&album, &[]);
         self.show_album_tracks(header, Vec::new());
@@ -2989,6 +3648,7 @@ impl App {
             1 => pick(&self.songs),
             2 => pick(&self.playlist_tracks),
             3 => self.album_tracks.clone(),
+            4 => self.song_selection.clone(),
             _ => Vec::new(),
         }
     }
@@ -3033,32 +3693,20 @@ impl App {
             plural(tracks.len(), "song", "songs")
         };
         let paths: Vec<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
+        let from_selection = self.menu_target.0 == 4;
         match action {
             0 | 1 => {
-                let was_empty = self.queue.is_empty();
-                let items: Vec<Item> = tracks.into_iter().map(Item::Track).collect();
-                let at = if action == 0 { self.current.map(|c| c + 1).unwrap_or(0) } else { self.queue.len() };
-                for (k, item) in items.into_iter().enumerate() {
-                    self.queue.insert(at + k, item);
-                }
-                if let Some(c) = self.current {
-                    if at <= c {
-                        self.current = Some(c + paths.len());
-                    }
-                }
-                self.history.clear();
-                self.rebuild_queue_model();
-                self.update_next();
-                if was_empty || self.state == PlayState::Stopped && self.current.is_none() {
-                    self.play_index(at);
-                } else {
-                    self.show_toast(&if action == 0 { format!("{what} will play next") } else { format!("Added {what} to the queue") });
+                if let Some(message) = self.enqueue(tracks, action == 0) {
+                    self.show_toast(&message);
                 }
             }
             2 => {
                 let Some(pl) = self.playlists.get(playlist.max(0) as usize).cloned() else { return };
                 match self.library.add_to_playlist(pl.id, &paths) {
                     Ok(()) => {
+                        if from_selection {
+                            self.clear_song_selection();
+                        }
                         self.show_toast(&format!("Added {what} to \"{}\"", pl.name));
                         let open = self.current_playlist_id() == Some(pl.id);
                         self.refresh_playlists();
@@ -3071,11 +3719,121 @@ impl App {
             }
             3 => {
                 if let Some(id) = self.create_playlist_with("New Playlist", &paths) {
+                    if from_selection {
+                        self.clear_song_selection();
+                    }
                     let name = self.playlists.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
                     self.show_toast(&format!("Created \"{name}\" with {what}"));
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Puts songs into the queue: after the song playing now (`next`) or at
+    /// the end. Starts playing when nothing was queued. Returns what to tell
+    /// the user, or None when playback started (that is visible anyway).
+    fn enqueue(&mut self, tracks: Vec<Track>, next: bool) -> Option<String> {
+        if tracks.is_empty() {
+            return None;
+        }
+        let what = if tracks.len() == 1 { format!("\"{}\"", tracks[0].title) } else { plural(tracks.len(), "song", "songs") };
+        let count = tracks.len();
+        let was_empty = self.queue.is_empty();
+        let at = if next { self.current.map(|c| c + 1).unwrap_or(0) } else { self.queue.len() };
+        for (k, t) in tracks.into_iter().enumerate() {
+            self.queue.insert(at + k, Item::Track(t));
+        }
+        if let Some(c) = self.current {
+            if at <= c {
+                self.current = Some(c + count);
+            }
+        }
+        self.history.clear();
+        self.rebuild_queue_model();
+        self.update_next();
+        log(format!("queue: {count} added {}", if next { "next" } else { "at the end" }));
+        if was_empty || self.state == PlayState::Stopped && self.current.is_none() {
+            self.play_index(at);
+            None
+        } else if next {
+            Some(format!("{what} will play next"))
+        } else {
+            Some(format!("Added {what} to the end of the queue"))
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Songs page: picking songs and swiping them into the queue
+    // ------------------------------------------------------------------
+
+    fn show_song_selection(&mut self) {
+        let count = self.song_selection.len() as i32;
+        if let Some(ui) = self.ui() {
+            ui.set_song_selection_count(count);
+        }
+    }
+
+    /// Long press (or a tap while songs are picked): picks the song or
+    /// lets it go again.
+    pub fn toggle_song_selected(&mut self, index: usize) {
+        let Some(track) = self.songs.get(index).cloned() else { return };
+        let selected = if let Some(k) = self.song_selection.iter().position(|s| s.path == track.path) {
+            self.song_selection.remove(k);
+            false
+        } else {
+            self.song_selection.push(track);
+            true
+        };
+        log(format!("songs: {} picked", self.song_selection.len()));
+        if let Some(ui) = self.ui() {
+            let m = ui.get_songs();
+            if let Some(mut item) = m.row_data(index) {
+                item.selected = selected;
+                m.set_row_data(index, item);
+            }
+        }
+        self.show_song_selection();
+    }
+
+    pub fn clear_song_selection(&mut self) {
+        if self.song_selection.is_empty() {
+            return;
+        }
+        self.song_selection.clear();
+        if let Some(ui) = self.ui() {
+            let m = ui.get_songs();
+            for i in 0..m.row_count() {
+                if let Some(mut item) = m.row_data(i) {
+                    if item.selected {
+                        item.selected = false;
+                        m.set_row_data(i, item);
+                    }
+                }
+            }
+        }
+        self.show_song_selection();
+    }
+
+    /// A song row was swiped: right puts it after the song playing now,
+    /// left at the end of the queue. A picked song takes all picked songs
+    /// with it (and the picking ends). Returns the text for the bubble.
+    pub fn song_swiped(&mut self, index: usize, next: bool) -> String {
+        let Some(track) = self.songs.get(index).cloned() else { return String::new() };
+        let tracks = if self.is_song_selected(&track) {
+            let picked = self.song_selection.clone();
+            self.clear_song_selection();
+            picked
+        } else {
+            vec![track]
+        };
+        let first = tracks[0].title.clone();
+        let count = tracks.len();
+        log(format!("songs: swiped {} with {count} song(s)", if next { "right" } else { "left" }));
+        match self.enqueue(tracks, next) {
+            Some(message) => message,
+            None if count == 1 => format!("Playing \"{first}\""),
+            None => format!("Playing {}", plural(count, "song", "songs")),
         }
     }
 
@@ -3899,6 +4657,11 @@ impl App {
             ui.set_duration_text(dur.into());
             ui.set_seekable(seekable);
         }
+        // Android: keeps the progress on the lock screen right after a seek.
+        #[cfg(target_os = "android")]
+        {
+            self.media.set_position(self.position);
+        }
     }
 
     fn refresh_now_playing(&mut self) {
@@ -4296,7 +5059,8 @@ impl App {
                 self.lyrics = Some(l);
                 self.show_lyrics(lines, synced, &source, "");
                 // Lyrics from LRCLIB for a song on this computer can be kept with it.
-                let savable = source == "LRCLIB" && self.current_local_song().is_some();
+                // (Not on Android: apps can't change the music files there.)
+                let savable = source == "LRCLIB" && self.current_local_song().is_some() && !cfg!(target_os = "android");
                 if let Some(ui) = self.ui() {
                     ui.set_lyrics_can_save(savable);
                 }
@@ -4739,6 +5503,16 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_play_album, |a, shuffle| a.play_album(shuffle));
     on!(on_play_album_track, |a, i| a.play_album_track(i.max(0) as usize));
     on!(on_play_song, |a, i| a.play_song(i.max(0) as usize));
+    on!(on_toggle_song_selected, |a, i| a.toggle_song_selected(i.max(0) as usize));
+    on!(on_clear_song_selection, |a| a.clear_song_selection());
+    {
+        let app = app.clone();
+        ui.on_song_swiped(move |i, next| {
+            let mut text = String::new();
+            with(&app, |a| text = a.song_swiped(i.max(0) as usize, next));
+            text.into()
+        });
+    }
     on!(on_rescan, |a| a.start_scan());
     on!(on_radio_select_tab, |a, t| a.load_radio_tab(t));
     on!(on_radio_genre, |a, g| a.radio_genre(g.max(0) as usize));
@@ -4754,8 +5528,14 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_move_queue_index, |a, from, to| a.move_queue_item(from.max(0) as usize, to.max(0) as usize));
     on!(on_move_playlist_track, |a, from, to| a.move_playlist_track(from.max(0) as usize, to.max(0) as usize));
     on!(on_toggle_play, |a| a.toggle_play());
-    on!(on_next, |a| a.next(false));
-    on!(on_previous, |a| a.previous());
+    on!(on_next, |a| {
+        log("player: next song (asked)");
+        a.next(false)
+    });
+    on!(on_previous, |a| {
+        log("player: previous song (asked)");
+        a.previous()
+    });
     on!(on_seek, |a, f| a.seek_fraction(f));
     on!(on_seek_relative, |a, d| a.seek_relative(d as f64));
     on!(on_volume_changed, |a, v| a.set_volume(v));
@@ -4797,9 +5577,14 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_open_server, |a, i| a.open_server(i.max(0) as usize));
     on!(on_refresh_server, |a| a.refresh_server());
     on!(on_open_server_album, |a, i| a.open_server_album(i.max(0) as usize));
+    on!(on_albums_visible, |a, first, last| a.albums_visible(first.max(0) as usize, last.max(0) as usize));
+    on!(on_server_albums_visible, |a, first, last| a.server_albums_visible(first.max(0) as usize, last.max(0) as usize));
+    on!(on_select_source, |a, i| a.select_source(i));
     on!(on_remove_server, |a, i| a.remove_server(i.max(0) as usize));
     on!(on_connect_server, |a, kind, url, user, secret| a.connect_server(kind, url.to_string(), user.to_string(), secret.to_string()));
     on!(on_close_server_dialog, |a| a.close_server_dialog());
+    on!(on_find_plex, |a| a.find_plex());
+    on!(on_pick_plex, |a, i| a.pick_plex(i.max(0) as usize));
     on!(on_crossfade_changed, |a, secs| a.set_crossfade(secs));
     on!(on_gapless_albums_changed, |a, on| a.set_gapless_albums(on));
     on!(on_lyrics_online_changed, |a, on| a.set_lyrics_online(on));
@@ -4823,11 +5608,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     {
         let app = app.clone();
         ui.on_fix_choose_image(move || {
-            let file = rfd::FileDialog::new()
-                .set_title("Choose a cover image")
-                .add_filter("Images", &["jpg", "jpeg", "png"])
-                .pick_file();
-            if let Some(file) = file {
+            if let Some(file) = crate::dialogs::pick_cover_image() {
                 with(&app, |a| a.fix_set_local_image(file));
             }
         });
@@ -4839,12 +5620,8 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         let weak = ui.as_weak();
         ui.on_export_playlist(move || {
             let name = weak.upgrade().map(|u| u.get_playlist_name().to_string()).unwrap_or_default();
-            let file = rfd::FileDialog::new()
-                .set_title("Export playlist")
-                .set_file_name(format!("{}.m3u", if name.is_empty() { "Playlist" } else { &name }))
-                .add_filter("M3U playlist", &["m3u", "m3u8"])
-                .save_file();
-            if let Some(file) = file {
+            let file_name = format!("{}.m3u", if name.is_empty() { "Playlist" } else { &name });
+            if let Some(file) = crate::dialogs::save_playlist(&file_name) {
                 with(&app, |a| a.export_playlist(file));
             }
         });
@@ -4852,11 +5629,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     {
         let app = app.clone();
         ui.on_import_playlist(move || {
-            let file = rfd::FileDialog::new()
-                .set_title("Import playlist")
-                .add_filter("M3U playlist", &["m3u", "m3u8"])
-                .pick_file();
-            if let Some(file) = file {
+            if let Some(file) = crate::dialogs::pick_playlist() {
                 with(&app, |a| a.import_playlist(file));
             }
         });
@@ -4868,8 +5641,15 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     {
         let app = app.clone();
         ui.on_add_folder(move || {
-            if let Some(folder) = rfd::FileDialog::new().set_title("Add music folder").pick_folder() {
-                with(&app, |a| a.add_folder(folder));
+            #[cfg(target_os = "android")]
+            {
+                with(&app, |a| a.find_music());
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                if let Some(folder) = crate::dialogs::pick_music_folder() {
+                    with(&app, |a| a.add_folder(folder));
+                }
             }
         });
     }
@@ -4907,7 +5687,14 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     }
 }
 
+/// Opens a web page in the browser. Returns false if that failed.
+#[cfg(target_os = "android")]
+fn open_in_browser(url: &str) -> bool {
+    crate::android::platform().is_some_and(|p| p.open_url(url))
+}
+
 /// Opens a web page in the default browser. Returns false if that failed.
+#[cfg(not(target_os = "android"))]
 fn open_in_browser(url: &str) -> bool {
     use std::process::{Command, Stdio};
     let mut cmd = if cfg!(target_os = "windows") {

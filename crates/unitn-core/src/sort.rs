@@ -79,13 +79,21 @@ fn descending(orders: &[Order], index: usize, reversed: bool) -> bool {
 }
 
 pub fn sort_albums(albums: &mut [Album], index: usize, reversed: bool, ignore_articles: bool) {
+    sort_albums_by(albums, |a| a, index, reversed, ignore_articles);
+}
+
+/// Like [`sort_albums`], for a list of things that each have an album (so
+/// what belongs to an album stays with it).
+pub fn sort_albums_by<T>(items: &mut [T], album: impl Fn(&T) -> &Album, index: usize, reversed: bool, ignore_articles: bool) {
     let cmp_name = |a: &str, b: &str| by_name(a, b, ignore_articles);
     let desc = descending(ALBUM_ORDERS, index, reversed);
     // Within one artist, albums go oldest to newest (by year).
     let artist_then_year = |a: &Album, b: &Album| {
         cmp_name(&a.artist, &b.artist).then(a.year.cmp(&b.year)).then_with(|| cmp_name(&a.title, &b.title))
     };
-    albums.sort_by(|a, b| match index {
+    items.sort_by(|a, b| {
+        let (a, b) = (album(a), album(b));
+        match index {
         1 => directed(cmp_name(&a.title, &b.title), desc, || cmp_name(&a.artist, &b.artist)),
         // Albums without a year go last either way.
         2 => (a.year == 0)
@@ -95,6 +103,7 @@ pub fn sort_albums(albums: &mut [Album], index: usize, reversed: bool, ignore_ar
         _ => {
             let p = cmp_name(&a.artist, &b.artist);
             (if desc { p.reverse() } else { p }).then(a.year.cmp(&b.year)).then_with(|| cmp_name(&a.title, &b.title))
+        }
         }
     });
 }

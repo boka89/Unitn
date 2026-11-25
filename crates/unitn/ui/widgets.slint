@@ -15,6 +15,8 @@ export struct AlbumItem {
     year: string,
     cover: image,
     has-cover: bool,
+    /// Server albums in the library: the kind of server (e.g. "Plex").
+    source: string,
 }
 
 export struct TrackItem {
@@ -24,6 +26,8 @@ export struct TrackItem {
     artist: string,
     album: string,
     duration: string,
+    /// Picked on the Songs page (long press).
+    selected: bool,
 }
 
 export struct ArtistItem {
@@ -214,6 +218,10 @@ export global Dnd {
 export component DragSource inherits DragArea {
     in property <string> what;
     in property <string> kind: "song";
+    /// Whether this can be dragged. Never on Android: there a finger on a
+    /// card or row scrolls, swipes or long-presses instead.
+    in property <bool> allowed: true;
+    enabled: root.allowed && !Theme.mobile;
     allow-copy: true;
     data: Dnd.payload(root.what);
     drag-image: root.kind == "album" ? @image-url("icons/drag-album.svg")
@@ -246,7 +254,7 @@ export component NavItem inherits Rectangle {
     callback clicked;
     callback dropped(data-transfer);
 
-    height: 38px;
+    height: Theme.phone ? 46px : 38px;
     border-radius: 8px;
     background: drop.hot ? Theme.accent-soft
         : selected ? Theme.surface-hover : (touch.has-hover ? Theme.surface : transparent);
@@ -309,9 +317,9 @@ export component SeekBar inherits Rectangle {
 
     property <float> dragged: Math.max(0, Math.min(1, touch.mouse-x / root.width));
     property <float> shown: touch.pressed ? dragged : Math.max(0, Math.min(1, value));
-    property <bool> hot: enabled && (touch.has-hover || touch.pressed);
+    property <bool> hot: enabled && (touch.has-hover || touch.pressed || Theme.phone);
 
-    height: 18px;
+    height: Theme.phone ? 30px : 18px;
 
     Rectangle {
         y: (parent.height - self.height) / 2;
@@ -740,7 +748,7 @@ export component MenuRow inherits Rectangle {
     in property <bool> has-icon: true;
     in property <bool> danger: false;
     callback clicked;
-    height: 34px;
+    height: Theme.phone ? 44px : 34px;
     border-radius: 6px;
     background: touch.has-hover ? Theme.surface-hover : transparent;
     HorizontalLayout {
