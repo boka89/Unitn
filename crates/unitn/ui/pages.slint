@@ -639,16 +639,19 @@ component FilterButton inherits Rectangle {
     callback clicked;
 
     height: 30px;
-    width: filter-row.preferred-width + 24px;
+    width: filter-row.preferred-width;
     border-radius: 15px;
     background: root.selected ? Theme.accent-soft : (touch.has-hover ? Theme.surface-hover : transparent);
     border-width: 1px;
     border-color: root.selected ? Theme.accent : Theme.border;
 
     filter-row := HorizontalLayout {
-        x: 12px;
+        padding-left: 12px;
+        padding-right: 8px;
         spacing: 4px;
         Text {
+            max-width: 200px;
+            overflow: elide;
             text: root.text;
             color: root.selected ? Theme.accent : Theme.fg;
             font-size: 12px;
