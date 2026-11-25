@@ -154,6 +154,9 @@ tap 184 $CHIP_Y 3                                             # back to Song
 tap 405 $TAB_Y 8; shot phone-radio                            # Radio
 tap 584 252 1; tap 775 252 1; tap 938 252 8                  # filters: Hungary + Pop + Rock at once
 shot phone-radio-filters
+# Browse by country (second row of buttons on a phone): the list, then a
+# tap outside closes it.
+tap 150 383 4; shot phone-radio-picker; tap 540 1700 2
 tap 127 252 6                                                 # Popular clears them again
 tap 675 $TAB_Y 5; shot phone-podcasts                         # Podcasts
 # Holding the small player opens the queue (with the Now Playing chips).
@@ -161,6 +164,8 @@ adb shell input swipe 300 2040 300 2040 900; sleep 3; shot phone-queue
 tap 538 249 3; shot phone-np-playlists                        # Now Playing's Playlists chip
 tap 772 249 3; shot phone-np-sources                          # its Sources chip: folders, servers
 tap 945 $TAB_Y 3; shot phone-settings                         # Settings tab
+tap 895 134 4; shot phone-stats                               # Settings -> Statistics
+adb shell input keyevent KEYCODE_BACK; sleep 2                # back to Settings
 adb shell input swipe 540 1700 540 500 400; sleep 2; shot phone-settings-2
 adb shell input swipe 540 1700 540 500 400; sleep 2; shot phone-settings-3
 tap 224 1485 3; shot phone-add-server                         # Settings -> Add server

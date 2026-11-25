@@ -533,7 +533,9 @@ export component AppWindow inherits Window {
         // playlists go back to the player, a playlist to the playlists,
         // a server to Settings, everything else to Music.
         if (root.music-chips && root.page != 8) { return false; }
-        if (root.page == 4 || (root.page == 11 && root.np-group)) {
+        if (root.page == 13) {
+            root.page = 7;
+        } else if (root.page == 4 || (root.page == 11 && root.np-group)) {
             root.page = 6;
         } else if (root.page == 8) {
             root.page = 11;
@@ -976,6 +978,40 @@ export component AppWindow inherits Window {
                                     icon-size: 16px;
                                     tint: Theme.fg-muted;
                                     clicked => { root.flip-sort(root.page); }
+                                }
+                            }
+                        }
+                        // Phone: Statistics opens from Settings.
+                        if root.phone && root.page == 7: VerticalLayout {
+                            alignment: center;
+                            stats-button := Rectangle {
+                                height: 36px;
+                                width: stats-row.preferred-width + 24px;
+                                border-radius: 18px;
+                                background: stats-touch.has-hover ? Theme.surface-hover : Theme.surface;
+                                border-width: 1px;
+                                border-color: Theme.border;
+                                stats-row := HorizontalLayout {
+                                    x: 12px;
+                                    spacing: 6px;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Image {
+                                            source: @image-url("icons/stats.svg");
+                                            width: 16px;
+                                            height: 16px;
+                                            colorize: Theme.fg;
+                                        }
+                                    }
+                                    Text {
+                                        text: "Statistics";
+                                        color: Theme.fg;
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                stats-touch := TouchArea {
+                                    clicked => { root.page = 13; }
                                 }
                             }
                         }

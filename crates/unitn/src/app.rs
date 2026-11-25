@@ -597,6 +597,9 @@ pub struct App {
     buffering_warned: bool,
     logged_second: i64,
     listen: Option<Listen>,
+    /// Android: when the session was last saved, and at which position (the
+    /// app can be closed by the system at any time, without a clean exit).
+    session_saved: (std::time::Instant, f64),
     /// Statistics page: 0 = last 30 days, 1 = all time.
     stats_period: i32,
 }
@@ -740,6 +743,7 @@ impl App {
             buffering_warned: false,
             logged_second: -1,
             listen: None,
+            session_saved: (std::time::Instant::now(), 0.0),
             stats_period: 0,
         }
     }
@@ -959,6 +963,16 @@ impl App {
 
     pub fn poll(&mut self) {
         self.tick_glass_trial();
+        // Android may end the app without warning (low memory, swiped away):
+        // keep "Continue where I left off" and the play counts up to date.
+        #[cfg(target_os = "android")]
+        {
+            let (at, position) = self.session_saved;
+            if at.elapsed() >= Duration::from_secs(10) && (self.position - position).abs() > 1.0 {
+                self.session_saved = (std::time::Instant::now(), self.position);
+                self.save_session();
+            }
+        }
         // One event at a time, so nothing is lost if handling one goes wrong.
         while let Ok(e) = self.player_events.try_recv() {
             self.on_player_event(e);
@@ -1406,7 +1420,12 @@ impl App {
             MediaCmd::Toggle => self.toggle_play(),
             MediaCmd::Next => self.next(false),
             MediaCmd::Previous => self.previous(),
-            MediaCmd::Stop => self.player.stop(),
+            MediaCmd::Stop => {
+                // Android: the app was swiped away; it ends right after this.
+                self.finish_listen();
+                self.save_session();
+                self.player.stop();
+            }
             MediaCmd::SeekTo(secs) => {
                 if matches!(self.current_item(), Some(Item::Track(_))) {
                     self.player.seek(secs);
@@ -5040,7 +5059,8 @@ impl App {
                 self.lyrics = Some(l);
                 self.show_lyrics(lines, synced, &source, "");
                 // Lyrics from LRCLIB for a song on this computer can be kept with it.
-                let savable = source == "LRCLIB" && self.current_local_song().is_some();
+                // (Not on Android: apps can't change the music files there.)
+                let savable = source == "LRCLIB" && self.current_local_song().is_some() && !cfg!(target_os = "android");
                 if let Some(ui) = self.ui() {
                     ui.set_lyrics_can_save(savable);
                 }
