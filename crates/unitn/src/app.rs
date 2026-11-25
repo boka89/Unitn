@@ -26,8 +26,8 @@ use unitn_core::util::format_time;
 use crate::media::{Media, MediaCmd};
 use crate::settings::{Paths, Settings};
 use crate::{
-    AlbumItem, AppWindow, ArtistItem, EpisodeItem, FixCandidate, PlaylistItem, PodcastItem, QueueEntry, ServerItem, StationItem,
-    Theme, TrackItem, VizInfo,
+    AlbumItem, AppWindow, ArtistItem, DayBar, Dnd, EpisodeItem, FixCandidate, PlaylistItem, PodcastItem, QueueEntry, ServerItem,
+    StatRow, StatTile, StationItem, Theme, TrackItem, VizInfo,
 };
 
 const RADIO_LIMIT: u32 = 150;
@@ -35,7 +35,17 @@ const RADIO_LIMIT: u32 = 150;
 const VIZ_BARS: usize = 64;
 const RADIO_TAB_POPULAR: i32 = 0;
 const RADIO_TAB_FAVORITES: i32 = 1;
-const RADIO_TAB_HUNGARY: i32 = 2;
+/// The browse buttons on the Radio page, in their order there.
+const RADIO_PICK_COUNTRY: i32 = 0;
+const RADIO_PICK_LANGUAGE: i32 = 1;
+const RADIO_PICK_TAG: i32 = 2;
+const RADIO_PICK_CODEC: i32 = 3;
+const RADIO_PICK_BITRATE: i32 = 4;
+const RADIO_FILTER_NAMES: [&str; 5] = ["Country", "Language", "Tag", "Format", "Bitrate"];
+/// Minimum bitrates offered by the Bitrate button (0 = any).
+const RADIO_BITRATES: [u32; 5] = [0, 64, 128, 192, 320];
+/// At most this many rows in a browse list (the tag list is long).
+const RADIO_PICKER_ROWS: usize = 400;
 /// Genre chips on the Radio page, in their order there (Radio Browser tags).
 const RADIO_GENRES: [&str; 6] = ["pop", "rock", "jazz", "classical", "electronic", "news"];
 /// No chip selected (search results or a genre).
@@ -44,8 +54,18 @@ const RADIO_TAB_OTHER: i32 = -1;
 /// Results of background work, delivered to the UI thread.
 enum Bg {
     ScanProgress(usize),
+    /// Artist photos found (in music folders, already downloaded, or just
+    /// downloaded) for the Artists page: (artist, image file).
+    ArtistPhotos(Vec<(String, PathBuf)>),
+    ArtistPhotosDone,
+    /// Album covers made small enough for lists, decoded off the UI thread.
+    Thumbs(Vec<(PathBuf, Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>)>),
+    /// The cover thread finished its list.
+    ThumbsDone,
     ScanDone(Result<scanner::ScanStats, String>),
     Stations { request: u64, result: Result<Vec<Station>, String> },
+    /// The countries, languages, tags or formats of the radio directory.
+    RadioFacets { kind: unitn_core::radio::FacetKind, result: Result<Vec<unitn_core::radio::Facet>, String> },
     /// A cover was downloaded for an album.
     ArtFound,
     /// Artist photo lookup finished.
@@ -148,17 +168,120 @@ struct FixState {
     saving: bool,
 }
 
+/// The song being listened to, for the Statistics page: how much of it was
+/// heard (seeking doesn't count) and where it was at the last update.
+struct Listen {
+    track: Track,
+    heard: f64,
+    last: f64,
+}
+
+/// Statistics page.
+// (11 and 12 are the phone's Playlists and Sources pages.)
+const PAGE_STATS: i32 = 13;
+/// Rows in each top list.
+const STATS_TOP: usize = 10;
+/// Days in the listening chart.
+const STATS_DAYS: u32 = 30;
+
 enum StationQuery {
     Top,
-    /// Name search and/or filters: any of the tags, and the country.
-    Filtered { name: String, tags: Vec<String>, country: Option<String> },
+    /// Name search and/or filters.
+    Filtered(unitn_core::radio::Filter),
 }
 
 /// Something in the play queue.
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 enum Item {
     Track(Track),
     Station(Station),
+}
+
+/// What's playing, kept between starts ("Continue where I left off").
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Session {
+    queue: Vec<Item>,
+    current: Option<usize>,
+    position: f64,
+}
+
+/// Loads a cover and shrinks it to list size (at most 400 px, enough for the
+/// 200 px album page cover on high-DPI screens). Runs on the cover thread.
+const THUMB_SIZE: u32 = 320;
+
+/// Full-size images (Now Playing cover, artist photo behind it) are made no
+/// bigger than this, and only the last few are kept in memory.
+const COVER_MAX: u32 = 1920;
+const COVER_CACHE: usize = 3;
+
+/// Loads a full-size image, shrunk to at most [`COVER_MAX`] on its longer side.
+fn decode_cover(path: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
+    let img = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok()?;
+    let img = if img.width() > COVER_MAX || img.height() > COVER_MAX {
+        img.resize(COVER_MAX, COVER_MAX, image::imageops::FilterType::Triangle)
+    } else {
+        img
+    };
+    let rgba = img.to_rgba8();
+    Some(slint::SharedPixelBuffer::clone_from_slice(rgba.as_raw(), rgba.width(), rgba.height()))
+}
+
+/// Where the small copy of `path` is kept in the thumbnail folder. The name
+/// depends on the file's path, size and modification time, so an edited or
+/// replaced image gets a new thumbnail.
+fn thumb_file(path: &Path, dir: &Path) -> Option<PathBuf> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+    // FNV-1a: stable across Rust versions (unlike DefaultHasher).
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in path.to_string_lossy().bytes().chain(meta.len().to_le_bytes()).chain(mtime.to_le_bytes()) {
+        h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+    }
+    Some(dir.join(format!("{h:016x}.jpg")))
+}
+
+/// A cover or artist photo at grid size (at most [`THUMB_SIZE`]). It is read
+/// from the thumbnail folder when it's there; otherwise the original is
+/// decoded once, shrunk and saved there, so later visits only read a small
+/// JPEG instead of decoding a big image again.
+fn decode_thumb(path: &Path, dir: &Path) -> Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>> {
+    let cached = thumb_file(path, dir);
+    let from_cache = cached
+        .as_ref()
+        .and_then(|c| image::ImageReader::open(c).ok())
+        .and_then(|r| r.with_guessed_format().ok())
+        .and_then(|r| r.decode().ok());
+    let img = match from_cache {
+        Some(img) => img,
+        None => {
+            let img = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.decode().ok()?;
+            // 320px is sharp for the biggest album / artist cards; a decoded
+            // thumbnail costs width × height × 4 bytes of memory.
+            let img = if img.width() > THUMB_SIZE || img.height() > THUMB_SIZE { img.thumbnail(THUMB_SIZE, THUMB_SIZE) } else { img };
+            if let Some(c) = &cached {
+                let _ = std::fs::create_dir_all(dir);
+                let rgb = img.to_rgb8();
+                if let Ok(file) = std::fs::File::create(c) {
+                    let mut out = std::io::BufWriter::new(file);
+                    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 88);
+                    if rgb.write_with_encoder(enc).is_err() {
+                        drop(out);
+                        let _ = std::fs::remove_file(c);
+                    }
+                }
+            }
+            img
+        }
+    };
+    let rgba = img.to_rgba8();
+    Some(slint::SharedPixelBuffer::clone_from_slice(rgba.as_raw(), rgba.width(), rgba.height()))
+}
+
+
+/// A podcast episode (its path is a made-up "podcast://…" key).
+fn is_episode(t: &Track) -> bool {
+    t.path.to_string_lossy().starts_with("podcast://")
 }
 
 fn track_key(t: &Track) -> String {
@@ -176,6 +299,28 @@ fn album_key(artist: &str, title: &str) -> String {
 
 fn station_key(s: &Station) -> String {
     format!("radio:{}", s.uuid)
+}
+
+/// The browse list a Radio page button opens, for the ones the directory lists.
+fn facet_kind(which: i32) -> Option<unitn_core::radio::FacetKind> {
+    use unitn_core::radio::FacetKind;
+    match which {
+        RADIO_PICK_COUNTRY => Some(FacetKind::Country),
+        RADIO_PICK_LANGUAGE => Some(FacetKind::Language),
+        RADIO_PICK_TAG => Some(FacetKind::Tag),
+        RADIO_PICK_CODEC => Some(FacetKind::Codec),
+        _ => None,
+    }
+}
+
+fn facet_slot(kind: unitn_core::radio::FacetKind) -> usize {
+    use unitn_core::radio::FacetKind;
+    match kind {
+        FacetKind::Country => 0,
+        FacetKind::Language => 1,
+        FacetKind::Tag => 2,
+        FacetKind::Codec => 3,
+    }
 }
 
 fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
@@ -299,6 +444,9 @@ fn long_duration(ms: u64) -> String {
 /// (playing Likes shuffled) look it up by this exact name.
 pub const LIKES_PLAYLIST: &str = "Likes";
 
+/// Marks drag payloads that started in Unitn (see `App::drop_items`).
+pub const DRAG_PREFIX: &str = "unitn:";
+
 pub struct App {
     ui: Weak<AppWindow>,
     paths: Paths,
@@ -313,6 +461,16 @@ pub struct App {
     bg_rx: Receiver<Bg>,
 
     covers: HashMap<PathBuf, Option<Image>>,
+    /// Paths in `covers`, least recently used first.
+    cover_order: std::collections::VecDeque<PathBuf>,
+    /// The Artists page is shown (its pictures and photo lookups are wanted).
+    artist_pictures: bool,
+    /// The page shown (0 Albums, 1 Artists, …).
+    page: i32,
+    /// Albums / artists on screen in their grid, with a screen's margin
+    /// above and below: only their pictures are kept in memory.
+    album_range: Option<(usize, usize)>,
+    artist_range: Option<(usize, usize)>,
     albums: Vec<Album>,
     artist_filter: Option<String>,
     album_tracks: Vec<Track>,
@@ -370,7 +528,19 @@ pub struct App {
     radio_request: u64,
     /// Radio filters; several can be on at once (see `refresh_radio`).
     radio_favorites: bool,
-    radio_hungary: bool,
+    /// Picked in the browse lists: (value sent to the directory, name shown).
+    radio_country: Option<(String, String)>,
+    radio_language: Option<(String, String)>,
+    radio_tag: Option<(String, String)>,
+    radio_codec: Option<(String, String)>,
+    radio_bitrate: u32,
+    /// Browse lists loaded so far (country, language, tag, format).
+    radio_facets: [Option<Vec<unitn_core::radio::Facet>>; 4],
+    /// The open browse list (-1 none), and what each of its rows picks
+    /// (None = "Any").
+    radio_picker: i32,
+    radio_picker_query: String,
+    radio_picker_rows: Vec<Option<(String, String)>>,
     radio_genres: [bool; RADIO_GENRES.len()],
     radio_query: String,
 
@@ -395,6 +565,16 @@ pub struct App {
 
     last_viz_style: i32,
     artist_image_pending: HashSet<String>,
+    /// Photo of each artist for the Artists page (artist.jpg or downloaded).
+    artist_photos: HashMap<String, PathBuf>,
+    /// The Artists page's photo finder thread is running.
+    artist_photos_running: bool,
+    /// Small album covers for the album grid and album page.
+    thumbs: HashMap<PathBuf, Option<Image>>,
+    /// Covers waiting for the cover thread, and whether it runs.
+    thumb_queue: Vec<PathBuf>,
+    thumb_queued: HashSet<PathBuf>,
+    thumbs_loading: bool,
     playlists: Vec<Playlist>,
     current_playlist: Option<usize>,
     playlist_tracks: Vec<Track>,
@@ -402,6 +582,9 @@ pub struct App {
     menu_target: (i32, i32),
     /// Songs picked on the Songs page (long press), in the order picked.
     song_selection: Vec<Track>,
+    /// Size, maximized state and position of the full window while the mini
+    /// player is shown.
+    full_window: Option<(f32, f32, bool, Option<(i32, i32)>)>,
     /// Queue index the engine was told to play next (gapless).
     planned_next: Option<usize>,
     eq_gains_model: Rc<VecModel<f32>>,
@@ -413,6 +596,9 @@ pub struct App {
     buffering_since: Option<std::time::Instant>,
     buffering_warned: bool,
     logged_second: i64,
+    listen: Option<Listen>,
+    /// Statistics page: 0 = last 30 days, 1 = all time.
+    stats_period: i32,
 }
 
 impl App {
@@ -455,6 +641,11 @@ impl App {
             bg_tx,
             bg_rx,
             covers: HashMap::new(),
+            cover_order: std::collections::VecDeque::new(),
+            artist_pictures: false,
+            page: 0,
+            album_range: None,
+            artist_range: None,
             albums: Vec::new(),
             artist_filter: None,
             album_tracks: Vec::new(),
@@ -497,7 +688,15 @@ impl App {
             radio_tab: RADIO_TAB_POPULAR,
             radio_request: 0,
             radio_favorites: false,
-            radio_hungary: false,
+            radio_country: None,
+            radio_language: None,
+            radio_tag: None,
+            radio_codec: None,
+            radio_bitrate: 0,
+            radio_facets: Default::default(),
+            radio_picker: -1,
+            radio_picker_query: String::new(),
+            radio_picker_rows: Vec::new(),
             radio_genres: [false; RADIO_GENRES.len()],
             radio_query: String::new(),
             queue: Vec::new(),
@@ -518,11 +717,18 @@ impl App {
             viz_idle: false,
             last_viz_style: -1,
             artist_image_pending: HashSet::new(),
+            artist_photos: HashMap::new(),
+            artist_photos_running: false,
+            thumbs: HashMap::new(),
+            thumb_queue: Vec::new(),
+            thumb_queued: HashSet::new(),
+            thumbs_loading: false,
             playlists: Vec::new(),
             current_playlist: None,
             playlist_tracks: Vec::new(),
             menu_target: (0, -1),
             song_selection: Vec::new(),
+            full_window: None,
             planned_next: None,
             eq_gains_model: Rc::new(VecModel::from(vec![0.0f32; 10])),
             eq_aspect: 1.5,
@@ -533,6 +739,8 @@ impl App {
             buffering_since: None,
             buffering_warned: false,
             logged_second: -1,
+            listen: None,
+            stats_period: 0,
         }
     }
 
@@ -562,7 +770,11 @@ impl App {
             ui.set_gapless_albums(self.settings.gapless_albums);
             ui.set_lyrics_online(self.settings.lyrics_online);
             ui.set_startup_sound(self.settings.startup_sound);
+            ui.set_resume_session(self.settings.resume_session);
+            ui.set_lyrics_autosave(self.settings.lyrics_autosave as i32);
             ui.set_lyrics_open(self.settings.lyrics_open);
+            self.show_sort();
+            ui.set_sort_ignore_articles(self.settings.sort_ignore_articles);
             ui.set_glass_available(crate::glass::AVAILABLE);
             ui.global::<Theme>().set_mobile(cfg!(target_os = "android"));
             ui.set_glass(self.settings.glass && crate::glass::AVAILABLE);
@@ -576,10 +788,14 @@ impl App {
         self.player.set_crossfade(self.settings.crossfade as f64);
         self.apply_eq();
         self.favorites = self.library.favorite_uuids().unwrap_or_default();
+        // "Continue where I left off": the last song, paused.
+        self.restore_session();
 
         self.add_default_folders();
 
+        let t = std::time::Instant::now();
         self.reload_library();
+        log(format!("startup: library shown in {} ms", t.elapsed().as_millis()));
         self.refresh_folders();
         self.refresh_playlists();
         self.refresh_servers();
@@ -590,6 +806,7 @@ impl App {
         self.refresh_now_playing();
         self.refresh_position();
         self.start_scan();
+        log(format!("startup: ready in {} ms", t.elapsed().as_millis()));
     }
 
     /// First run: start with the OS music folder(s).
@@ -628,6 +845,97 @@ impl App {
             self.settings.window_width = Some(width);
             self.settings.window_height = Some(height);
         }
+    }
+
+    /// Remembers where the full window or the mini player is on the screen.
+    pub fn remember_position(&mut self, mini: bool, x: i32, y: i32) {
+        // Windows reports -32000 for minimized windows.
+        if x <= -30000 || y <= -30000 {
+            return;
+        }
+        if mini {
+            (self.settings.mini_x, self.settings.mini_y) = (Some(x), Some(y));
+        } else {
+            (self.settings.window_x, self.settings.window_y) = (Some(x), Some(y));
+        }
+    }
+
+    pub fn remember_mini_width(&mut self, width: f32) {
+        self.settings.mini_width = Some(width);
+    }
+
+    /// Switches between the full window and the mini player.
+    pub fn toggle_mini_player(&mut self) {
+        let Some(ui) = self.ui() else { return };
+        let window = ui.window();
+        if !ui.get_mini_player() {
+            if ui.get_viz_fullscreen() {
+                ui.set_viz_fullscreen(false);
+            }
+            let size = window.size().to_logical(window.scale_factor());
+            let pos = window.position();
+            let maximized = window.is_maximized();
+            self.full_window = Some((size.width, size.height, maximized, (!maximized).then_some((pos.x, pos.y))));
+            window.set_maximized(false);
+            ui.set_mini_player(true);
+            crate::keep_min_size(&ui);
+            // The mini player comes back where it was last, at its last width.
+            let width = self.settings.mini_width.filter(|w| w.is_finite()).unwrap_or(crate::MINI_DEFAULT_WIDTH);
+            let width = width.clamp(crate::MINI_WIDTH.0 as f32, crate::MINI_WIDTH.1 as f32);
+            window.set_size(slint::LogicalSize::new(width, crate::mini_height(&ui) as f32));
+            if let Some((x, y)) = self.settings.mini_x.zip(self.settings.mini_y) {
+                window.set_position(slint::PhysicalPosition::new(x, y));
+                crate::keep_on_screen(&ui);
+            }
+            self.settings.mini_player = true;
+            log("window: mini player");
+        } else {
+            ui.set_mini_player(false);
+            crate::keep_min_size(&ui);
+            // Back to the full window's size and place (also after the app
+            // was started as the mini player).
+            let s = &self.settings;
+            let saved = (
+                s.window_width.unwrap_or(1280.0).max(960.0),
+                s.window_height.unwrap_or(820.0).max(620.0),
+                s.window_maximized,
+                s.window_x.zip(s.window_y),
+            );
+            let (w, h, maximized, pos) = self.full_window.take().unwrap_or(saved);
+            window.set_size(slint::LogicalSize::new(w, h));
+            if let Some((x, y)) = pos {
+                window.set_position(slint::PhysicalPosition::new(x, y));
+                crate::keep_on_screen(&ui);
+            }
+            if maximized {
+                window.set_maximized(true);
+            }
+            self.settings.mini_player = false;
+            log("window: full player");
+        }
+        self.save_settings();
+        // The mini player may show lyrics while the lyrics panel is closed.
+        self.load_lyrics();
+    }
+
+    /// Shows or hides the mini player's line of lyrics.
+    pub fn toggle_mini_lyrics(&mut self) {
+        let Some(ui) = self.ui() else { return };
+        self.settings.mini_lyrics = !self.settings.mini_lyrics;
+        ui.set_mini_lyrics(self.settings.mini_lyrics);
+        if ui.get_mini_player() {
+            crate::keep_min_size(&ui);
+            let width = ui.window().size().to_logical(ui.window().scale_factor()).width;
+            ui.window().set_size(slint::LogicalSize::new(width, crate::mini_height(&ui) as f32));
+        }
+        self.save_settings();
+        self.load_lyrics();
+    }
+
+    /// Whether lyrics are shown anywhere: the lyrics panel, or the mini
+    /// player's line.
+    fn lyrics_wanted(&self) -> bool {
+        self.settings.lyrics_open || (self.settings.mini_lyrics && self.ui().is_some_and(|ui| ui.get_mini_player()))
     }
 
     pub fn save_settings(&self) {
@@ -846,6 +1154,7 @@ impl App {
                 }
             }
             PlayerEvent::Position { position, duration } => {
+                self.note_listening(position);
                 self.position = position;
                 if duration.is_some() {
                     self.duration = duration;
@@ -859,6 +1168,9 @@ impl App {
                 if let Some(next) = self.planned_next.take() {
                     if let Some(cur) = self.current {
                         self.history.push(cur);
+                    }
+                    if let Some(item) = self.queue.get(next).cloned() {
+                        self.start_listen(&item);
                     }
                     self.mark_current(Some(next));
                     self.position = 0.0;
@@ -890,6 +1202,13 @@ impl App {
 
     fn on_background(&mut self, job: Bg) {
         match job {
+            Bg::Thumbs(done) => self.on_thumbs(done),
+            Bg::ArtistPhotos(photos) => self.on_artist_photos(photos),
+            Bg::ArtistPhotosDone => self.artist_photos_running = false,
+            Bg::ThumbsDone => {
+                self.thumbs_loading = false;
+                self.load_thumbs();
+            }
             Bg::ScanProgress(n) => {
                 if let Some(ui) = self.ui() {
                     ui.set_library_status(format!("Scanning… {} found", plural(n, "file", "files")).into());
@@ -935,8 +1254,16 @@ impl App {
             }
             Bg::ArtistImage { artist, path } => {
                 self.artist_image_pending.remove(&artist);
+                if let Some(p) = &path {
+                    self.on_artist_photos(vec![(artist.clone(), p.clone())]);
+                }
+                // A local artist.jpg, if the song has one, stays in front of
+                // a downloaded photo.
                 let current = match self.current_item() {
-                    Some(Item::Track(t)) => t.grouping_artist() == artist,
+                    Some(Item::Track(t)) => {
+                        t.grouping_artist() == artist
+                            && (t.is_remote() || scanner::local_artist_image(&t.path).is_none())
+                    }
                     _ => false,
                 };
                 if current {
@@ -1048,6 +1375,7 @@ impl App {
                     }
                 }
             }
+            Bg::RadioFacets { kind, result } => self.radio_facets_loaded(kind, result),
             Bg::Stations { request, result } => {
                 if request != self.radio_request {
                     return; // a newer request superseded this one
@@ -1091,20 +1419,201 @@ impl App {
     // Library
     // ------------------------------------------------------------------
 
+    /// A full-size image (cover or artist photo). Only the last
+    /// [`COVER_CACHE`] are kept, so memory doesn't grow with every artist played.
     fn cover(&mut self, path: &Option<PathBuf>) -> (Image, bool) {
         let Some(path) = path else { return (Image::default(), false) };
-        let entry = self
-            .covers
-            .entry(path.clone())
-            .or_insert_with(|| Image::load_from_path(path).ok());
-        match entry {
-            Some(img) => (img.clone(), true),
-            None => (Image::default(), false),
+        if let Some(i) = self.cover_order.iter().position(|p| p == path) {
+            let p = self.cover_order.remove(i).unwrap_or_else(|| path.clone());
+            self.cover_order.push_back(p);
+        } else {
+            let img = decode_cover(path).map(Image::from_rgba8);
+            self.covers.insert(path.clone(), img);
+            self.cover_order.push_back(path.clone());
+            while self.cover_order.len() > COVER_CACHE {
+                if let Some(old) = self.cover_order.pop_front() {
+                    self.covers.remove(&old);
+                }
+            }
+        }
+        match self.covers.get(path) {
+            Some(Some(img)) => (img.clone(), true),
+            _ => (Image::default(), false),
+        }
+    }
+
+    /// An album cover for lists. Decoding big covers takes long, so ones not
+    /// loaded yet are handed to the cover thread and show up when ready.
+    /// A grid picture if it's decoded already. Which ones are decoded is
+    /// decided by [`Self::sync_thumbs`] (what's on screen).
+    fn thumb(&mut self, path: &Option<PathBuf>) -> (Image, bool) {
+        match path.as_ref().and_then(|p| self.thumbs.get(p)) {
+            Some(Some(img)) => (img.clone(), true),
+            _ => (Image::default(), false),
+        }
+    }
+
+    /// The pictures that should be in memory, most important first: the
+    /// open album's cover, then the cards on screen (and a screen's margin)
+    /// of the Albums or Artists grid.
+    fn wanted_thumbs(&self) -> Vec<PathBuf> {
+        let mut wanted: Vec<PathBuf> = Vec::new();
+        if let Some(p) = self.open_album.as_ref().and_then(|a| a.cover.clone()) {
+            wanted.push(p);
+        }
+        if let (0, Some((a, b))) = (self.page, self.album_range) {
+            wanted.extend(self.albums.iter().take(b + 1).skip(a).filter_map(|al| al.cover.clone()));
+        }
+        if let (1, Some((a, b))) = (self.page, self.artist_range) {
+            wanted.extend(self.artists.iter().take(b + 1).skip(a).filter_map(|ar| self.artist_picture(ar)));
+        }
+        wanted
+    }
+
+    /// Keeps only the wanted pictures in memory: drops the others (also from
+    /// the grids) and starts decoding the missing ones.
+    fn sync_thumbs(&mut self) {
+        let wanted_list = self.wanted_thumbs();
+        let wanted: HashSet<PathBuf> = wanted_list.iter().cloned().collect();
+        let dropped: HashSet<PathBuf> = self.thumbs.keys().filter(|p| !wanted.contains(*p)).cloned().collect();
+        if !dropped.is_empty() {
+            for p in &dropped {
+                self.thumbs.remove(p);
+            }
+            if let Some(ui) = self.ui() {
+                let albums = ui.get_albums();
+                for (i, a) in self.albums.iter().enumerate() {
+                    if a.cover.as_ref().is_some_and(|p| dropped.contains(p)) {
+                        if let Some(mut row) = albums.row_data(i).filter(|r| r.has_cover) {
+                            row.cover = Image::default();
+                            row.has_cover = false;
+                            albums.set_row_data(i, row);
+                        }
+                    }
+                }
+                let artists = ui.get_artists();
+                for (i, a) in self.artists.iter().enumerate() {
+                    if self.artist_picture(a).is_some_and(|p| dropped.contains(&p)) {
+                        if let Some(mut row) = artists.row_data(i).filter(|r| r.has_image) {
+                            row.image = Image::default();
+                            row.has_image = false;
+                            artists.set_row_data(i, row);
+                        }
+                    }
+                }
+            }
+        }
+        // Decode what's missing (on screen first); forget queued pictures
+        // that scrolled away before their turn.
+        self.thumb_queue.retain(|p| wanted.contains(p));
+        // (Pictures being decoded right now are dropped when they arrive.)
+        self.thumb_queued.retain(|p| wanted.contains(p));
+        for p in wanted_list {
+            if !self.thumbs.contains_key(&p) && self.thumb_queued.insert(p.clone()) {
+                self.thumb_queue.push(p);
+            }
+        }
+        self.load_thumbs();
+    }
+
+    /// Albums `first..=last` are on screen in the Albums grid.
+    pub fn set_album_range(&mut self, first: i32, last: i32) {
+        // Only the Albums page shows this grid.
+        self.page = 0;
+        self.album_range = Self::with_margin(first, last);
+        self.sync_thumbs();
+    }
+
+    /// Artists `first..=last` are on screen in the Artists grid.
+    pub fn set_artist_range(&mut self, first: i32, last: i32) {
+        // Only the Artists page shows this grid.
+        if self.page != 1 {
+            self.page_changed(1);
+        }
+        self.artist_range = Self::with_margin(first, last);
+        self.sync_thumbs();
+    }
+
+    /// A visible range plus one screenful above and below it.
+    fn with_margin(first: i32, last: i32) -> Option<(usize, usize)> {
+        if last < first || last < 0 {
+            return None;
+        }
+        let (first, last) = (first.max(0) as usize, last as usize);
+        let span = last - first + 1;
+        Some((first.saturating_sub(span), last + span))
+    }
+
+    /// Starts the cover thread for the covers waiting, if it isn't running.
+    fn load_thumbs(&mut self) {
+        if self.thumbs_loading || self.thumb_queue.is_empty() {
+            return;
+        }
+        self.thumbs_loading = true;
+        let paths = std::mem::take(&mut self.thumb_queue);
+        let (tx, dir) = (self.bg_tx.clone(), self.paths.thumbs.clone());
+        thread::spawn(move || {
+            // Small chunks, so the cards on screen fill in quickly.
+            for chunk in paths.chunks(6) {
+                let done: Vec<_> = chunk.iter().map(|p| (p.clone(), decode_thumb(p, &dir))).collect();
+                if tx.send(Bg::Thumbs(done)).is_err() {
+                    return;
+                }
+            }
+            let _ = tx.send(Bg::ThumbsDone);
+        });
+    }
+
+    /// Puts covers from the cover thread into the album grid and album page.
+    fn on_thumbs(&mut self, done: Vec<(PathBuf, Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>)>) {
+        let mut ready: HashSet<PathBuf> = HashSet::new();
+        // Pictures that scrolled away (or whose page was left) meanwhile are dropped.
+        let wanted: HashSet<PathBuf> = self.wanted_thumbs().into_iter().collect();
+        for (path, pixels) in done {
+            self.thumb_queued.remove(&path);
+            if !wanted.contains(&path) {
+                continue;
+            }
+            let img = pixels.map(Image::from_rgba8);
+            if img.is_some() {
+                ready.insert(path.clone());
+            }
+            self.thumbs.insert(path, img);
+        }
+        if ready.is_empty() {
+            return;
+        }
+        let Some(ui) = self.ui() else { return };
+        let model = ui.get_albums();
+        for (i, a) in self.albums.iter().enumerate() {
+            let Some(path) = a.cover.as_ref().filter(|p| ready.contains(*p)) else { continue };
+            if let (Some(mut row), Some(Some(img))) = (model.row_data(i), self.thumbs.get(path)) {
+                row.cover = img.clone();
+                row.has_cover = true;
+                model.set_row_data(i, row);
+            }
+        }
+        let artists = ui.get_artists();
+        for i in 0..if self.artist_pictures { self.artists.len() } else { 0 } {
+            let Some(path) = self.artist_picture(&self.artists[i]).filter(|p| ready.contains(p)) else { continue };
+            if let (Some(mut row), Some(Some(img))) = (artists.row_data(i), self.thumbs.get(&path)) {
+                row.image = img.clone();
+                row.has_image = true;
+                artists.set_row_data(i, row);
+            }
+        }
+        if let Some(path) = self.open_album.as_ref().and_then(|a| a.cover.clone()).filter(|p| ready.contains(p)) {
+            if let Some(Some(img)) = self.thumbs.get(&path) {
+                let mut item = ui.get_album();
+                item.cover = img.clone();
+                item.has_cover = true;
+                ui.set_album(item);
+            }
         }
     }
 
     fn album_item(&mut self, a: &Album) -> AlbumItem {
-        let (cover, has_cover) = self.cover(&a.cover);
+        let (cover, has_cover) = self.thumb(&a.cover);
         AlbumItem {
             key: album_key(&a.artist, &a.title).into(),
             title: a.title.as_str().into(),
@@ -1177,10 +1686,8 @@ impl App {
                     title: sa.title.clone(),
                     artist: sa.artist.clone(),
                     year: sa.year,
-                    track_count: 0,
-                    duration_ms: 0,
-                    // Looked up when the album scrolls into view.
-                    cover: None,
+                    // The cover is looked up when the album scrolls into view.
+                    ..Default::default()
                 };
                 out.push((album, Some((key, sa))));
             }
@@ -1223,7 +1730,7 @@ impl App {
             let saved = self.library.server_albums(only, None, None).unwrap_or_default();
             for (_, sa) in saved.into_iter().filter(|(k, _)| known.contains(k)) {
                 let name = if sa.artist.is_empty() { "Unknown Artist".to_string() } else { sa.artist };
-                add(Artist { name, album_count: 1, track_count: 0 }, &mut by_name);
+                add(Artist { name, album_count: 1, ..Default::default() }, &mut by_name);
             }
             by_name.sort_by_cached_key(|a| a.name.to_lowercase());
         }
@@ -1297,40 +1804,31 @@ impl App {
             MusicSource::Server(_) => 1,
             MusicSource::All => local + self.library.server_albums(None, None, None).map(|v| v.len() as u64).unwrap_or(0),
         };
+        // Sorted as chosen with the Sort buttons; a server album stays with
+        // where it comes from.
+        {
+            let s = &self.settings;
+            unitn_core::sort::sort_albums_by(&mut entries, |(a, _)| a, s.album_sort, s.album_sort_reversed, s.sort_ignore_articles);
+        }
+        self.sort_artists();
+        self.sort_songs();
 
-        let album_items: Vec<AlbumItem> = entries
+        let (albums, origins): (Vec<Album>, Vec<_>) = entries.into_iter().unzip();
+        self.albums = albums;
+        self.album_origins = origins;
+        let (albums, origins) = (self.albums.clone(), self.album_origins.clone());
+        let album_items: Vec<AlbumItem> = albums
             .iter()
+            .zip(origins.iter())
             .map(|(a, origin)| {
-                let mut item = match origin {
-                    // Server covers are loaded when they scroll into view.
-                    Some(_) => self.album_item_lazy(a),
-                    None => self.album_item(a),
-                };
+                // Covers are loaded for what is on screen (see `sync_thumbs`
+                // and, for server albums, `albums_visible`).
+                let mut item = self.album_item(a);
                 item.source = self.source_badge(origin);
                 item
             })
             .collect();
-        let (albums, origins): (Vec<Album>, Vec<_>) = entries.into_iter().unzip();
-        self.albums = albums;
-        self.album_origins = origins;
-        let artist_items: Vec<ArtistItem> = self
-            .artists
-            .iter()
-            .map(|a| ArtistItem {
-                name: a.name.as_str().into(),
-                info: if a.track_count > 0 {
-                    format!(
-                        "{} • {}",
-                        plural(a.album_count as usize, "album", "albums"),
-                        plural(a.track_count as usize, "song", "songs")
-                    )
-                } else {
-                    plural(a.album_count as usize, "album", "albums")
-                }
-                .into(),
-                initial: initial(&a.name),
-            })
-            .collect();
+        let artist_items = self.artist_items();
         let song_items = self.song_items();
         let albums_model = Rc::new(VecModel::from(album_items));
         self.albums_model = Some(albums_model.clone());
@@ -1346,6 +1844,8 @@ impl App {
         self.refresh_source_chips();
         // The first screenful of covers; the rest follow the scrolling.
         self.albums_visible(0, 23);
+        self.sync_thumbs();
+        self.find_artist_photos();
     }
 
     pub fn start_scan(&mut self) {
@@ -1536,22 +2036,38 @@ impl App {
         }
     }
 
-    /// Shows the artist's photo behind Now Playing, downloading it once.
-    fn update_backdrop(&mut self, artist: &str) {
+    /// Shows the artist's photo behind Now Playing: an `artist.jpg` kept
+    /// with the music if there is one, else one downloaded once.
+    fn update_backdrop(&mut self, artist: &str, song: Option<&Path>) {
+        if let Some(local) = song.and_then(scanner::local_artist_image) {
+            return self.show_backdrop(Some(local));
+        }
         match self.library.artist_image(artist) {
-            Ok(Some(path)) => return self.show_backdrop(path),
+            Ok(Some(Some(path))) => {
+                // Photos from before 0.5.17 sit in the covers folder under a
+                // hashed name: move them to the artists folder.
+                let path = match scanner::move_artist_photo(&path, &self.paths.artists, artist) {
+                    Some(moved) => {
+                        let _ = self.library.set_artist_image(artist, Some(&moved));
+                        moved
+                    }
+                    None => path,
+                };
+                return self.show_backdrop(Some(path));
+            }
+            Ok(Some(None)) => return self.show_backdrop(None),
             Ok(None) => self.show_backdrop(None),
             Err(_) => return self.show_backdrop(None),
         }
         if !self.settings.download_art || artist == "Unknown Artist" || !self.artist_image_pending.insert(artist.to_string()) {
             return;
         }
-        let (artist, db, covers, tx) =
-            (artist.to_string(), self.paths.database.clone(), self.paths.covers.clone(), self.bg_tx.clone());
+        let (artist, db, artists, tx) =
+            (artist.to_string(), self.paths.database.clone(), self.paths.artists.clone(), self.bg_tx.clone());
         thread::spawn(move || {
             let result = (|| -> anyhow::Result<Option<PathBuf>> {
                 let data = ArtFetcher::new().find_artist_image(&artist)?;
-                let path = data.and_then(|d| scanner::save_cover(&d, &covers, &format!("artist\u{1f}{artist}")));
+                let path = data.and_then(|d| scanner::save_artist_photo(&d, &artists, &artist));
                 Library::open(&db)?.set_artist_image(&artist, path.as_deref())?;
                 Ok(path)
             })();
@@ -1622,6 +2138,230 @@ impl App {
         });
     }
 
+    fn sort_albums(&mut self) {
+        let s = &self.settings;
+        unitn_core::sort::sort_albums(&mut self.albums, s.album_sort, s.album_sort_reversed, s.sort_ignore_articles);
+    }
+
+    fn sort_artists(&mut self) {
+        let s = &self.settings;
+        unitn_core::sort::sort_artists(&mut self.artists, s.artist_sort, s.artist_sort_reversed, s.sort_ignore_articles);
+    }
+
+    fn sort_songs(&mut self) {
+        // Dates added are only needed for "Recently added".
+        let added = if self.settings.song_sort == 6 { self.library.added_times().unwrap_or_default() } else { HashMap::new() };
+        let s = &self.settings;
+        unitn_core::sort::sort_songs(&mut self.songs, s.song_sort, s.song_sort_reversed, &added, s.sort_ignore_articles);
+    }
+
+    /// The picture for an artist: their photo, else one of their album covers.
+    fn artist_picture(&self, a: &Artist) -> Option<PathBuf> {
+        self.artist_photos.get(&a.name).cloned().or_else(|| a.cover.clone())
+    }
+
+    fn artist_item(&mut self, a: &Artist) -> ArtistItem {
+        let (image, has_image) = self.thumb(&self.artist_picture(a));
+        ArtistItem {
+            name: a.name.as_str().into(),
+            info: format!(
+                "{} • {}",
+                plural(a.album_count as usize, "album", "albums"),
+                plural(a.track_count as usize, "song", "songs")
+            )
+            .into(),
+            initial: initial(&a.name),
+            image,
+            has_image,
+        }
+    }
+
+    fn artist_items(&mut self) -> Vec<ArtistItem> {
+        let artists = self.artists.clone();
+        artists.iter().map(|a| self.artist_item(a)).collect()
+    }
+
+    /// Updates one artist on the Artists page (after their photo arrived).
+    fn refresh_artist(&mut self, name: &str) {
+        let Some(i) = self.artists.iter().position(|a| a.name == name) else { return };
+        let artist = self.artists[i].clone();
+        let item = self.artist_item(&artist);
+        if let Some(ui) = self.ui() {
+            let model = ui.get_artists();
+            if i < model.row_count() {
+                model.set_row_data(i, item);
+            }
+        }
+    }
+
+    /// Finds photos for the Artists page in the background: an artist.jpg in
+    /// the music folders, else one downloaded earlier; then, if album art
+    /// downloads are on, downloads the missing ones slowly (the photo
+    /// services ask for no more than about one request a second).
+    /// Only the shown grid's pictures are kept; leaving a grid frees them.
+    pub fn page_changed(&mut self, page: i32) {
+        self.page = page;
+        if page == PAGE_STATS {
+            self.refresh_stats();
+        }
+        if page != 0 {
+            self.album_range = None;
+        }
+        if page != 1 {
+            self.artist_range = None;
+        }
+        self.artist_pictures = page == 1;
+        if page == 1 {
+            self.find_artist_photos();
+        }
+        self.sync_thumbs();
+    }
+
+    fn find_artist_photos(&mut self) {
+        if !self.artist_pictures || self.artist_photos_running || self.artists.is_empty() {
+            return;
+        }
+        self.artist_photos_running = true;
+        let artists: Vec<(String, Option<PathBuf>)> =
+            self.artists.iter().filter(|a| !self.artist_photos.contains_key(&a.name)).map(|a| (a.name.clone(), a.sample.clone())).collect();
+        let pending = self.artist_image_pending.clone();
+        let (db, dir, tx, download) =
+            (self.paths.database.clone(), self.paths.artists.clone(), self.bg_tx.clone(), self.settings.download_art);
+        thread::spawn(move || {
+            let Ok(library) = Library::open(&db) else {
+                let _ = tx.send(Bg::ArtistPhotosDone);
+                return;
+            };
+            let mut found = Vec::new();
+            let mut missing = Vec::new();
+            for (name, sample) in artists {
+                if let Some(photo) = sample.as_deref().and_then(scanner::local_artist_image) {
+                    found.push((name, photo));
+                    continue;
+                }
+                match library.artist_image(&name) {
+                    Ok(Some(Some(photo))) if photo.is_file() => found.push((name, photo)),
+                    Ok(Some(_)) => {} // looked up before: there is none
+                    _ => missing.push(name),
+                }
+            }
+            if tx.send(Bg::ArtistPhotos(found)).is_err() {
+                return;
+            }
+            if download {
+                let skip = ["unknown artist", "various artists", "various", "va"];
+                for name in missing.into_iter().filter(|n| !skip.contains(&n.to_lowercase().as_str()) && !pending.contains(n)) {
+                    std::thread::sleep(Duration::from_millis(1500));
+                    let photo = (|| -> anyhow::Result<Option<PathBuf>> {
+                        let data = ArtFetcher::new().find_artist_image(&name)?;
+                        let path = data.and_then(|d| scanner::save_artist_photo(&d, &dir, &name));
+                        library.set_artist_image(&name, path.as_deref())?;
+                        Ok(path)
+                    })();
+                    match photo {
+                        Ok(Some(path)) => {
+                            if tx.send(Bg::ArtistPhotos(vec![(name, path)])).is_err() {
+                                return;
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => log(format!("art: artist photo for {name} failed: {e:#}")),
+                    }
+                }
+            }
+            let _ = tx.send(Bg::ArtistPhotosDone);
+        });
+    }
+
+    fn on_artist_photos(&mut self, photos: Vec<(String, PathBuf)>) {
+        let names: Vec<String> = photos.iter().map(|(n, _)| n.clone()).collect();
+        self.artist_photos.extend(photos);
+        for name in &names {
+            self.refresh_artist(name);
+        }
+        self.sync_thumbs();
+    }
+
+    /// Shows the sort menus' labels and the chosen orders.
+    fn show_sort(&self) {
+        use unitn_core::sort::{Order, ALBUM_ORDERS, ARTIST_ORDERS, SONG_ORDERS};
+        let Some(ui) = self.ui() else { return };
+        let labels = |orders: &[Order]| model(orders.iter().map(|o| SharedString::from(o.label)).collect::<Vec<_>>());
+        let desc = |orders: &[Order], i: usize, reversed: bool| orders.get(i).map(|o| o.descending).unwrap_or(false) != reversed;
+        let s = &self.settings;
+        ui.set_album_sort_labels(labels(ALBUM_ORDERS));
+        ui.set_artist_sort_labels(labels(ARTIST_ORDERS));
+        ui.set_song_sort_labels(labels(SONG_ORDERS));
+        ui.set_album_sort(s.album_sort as i32);
+        ui.set_artist_sort(s.artist_sort as i32);
+        ui.set_song_sort(s.song_sort as i32);
+        ui.set_album_sort_desc(desc(ALBUM_ORDERS, s.album_sort, s.album_sort_reversed));
+        ui.set_artist_sort_desc(desc(ARTIST_ORDERS, s.artist_sort, s.artist_sort_reversed));
+        ui.set_song_sort_desc(desc(SONG_ORDERS, s.song_sort, s.song_sort_reversed));
+    }
+
+    /// Picks the sort order of a page (0 Albums, 1 Artists, 2 Songs), in its
+    /// natural direction.
+    pub fn set_sort(&mut self, page: i32, index: usize) {
+        use unitn_core::sort::{ALBUM_ORDERS, ARTIST_ORDERS, SONG_ORDERS};
+        let s = &mut self.settings;
+        match page {
+            0 if index < ALBUM_ORDERS.len() => (s.album_sort, s.album_sort_reversed) = (index, false),
+            1 if index < ARTIST_ORDERS.len() => (s.artist_sort, s.artist_sort_reversed) = (index, false),
+            2 if index < SONG_ORDERS.len() => (s.song_sort, s.song_sort_reversed) = (index, false),
+            _ => return,
+        }
+        self.apply_sort(page);
+    }
+
+    /// Flips the direction of a page's sort order.
+    pub fn flip_sort(&mut self, page: i32) {
+        let s = &mut self.settings;
+        match page {
+            0 => s.album_sort_reversed = !s.album_sort_reversed,
+            1 => s.artist_sort_reversed = !s.artist_sort_reversed,
+            2 => s.song_sort_reversed = !s.song_sort_reversed,
+            _ => return,
+        }
+        self.apply_sort(page);
+    }
+
+    /// Whether sorting skips a leading "The", "A" or "An"; re-sorts all pages.
+    pub fn set_sort_ignore_articles(&mut self, on: bool) {
+        self.settings.sort_ignore_articles = on;
+        for page in 0..3 {
+            self.apply_sort(page);
+        }
+    }
+
+    fn apply_sort(&mut self, page: i32) {
+        self.save_settings();
+        self.show_sort();
+        match page {
+            0 => {
+                self.sort_albums();
+                let albums = self.albums.clone();
+                let items: Vec<AlbumItem> = albums.iter().map(|a| self.album_item(a)).collect();
+                if let Some(ui) = self.ui() {
+                    ui.set_albums(model(items));
+                }
+                self.sync_thumbs();
+            }
+            1 => {
+                self.sort_artists();
+                let items = self.artist_items();
+                if let Some(ui) = self.ui() {
+                    ui.set_artists(model(items));
+                }
+                self.sync_thumbs();
+            }
+            _ => {
+                self.sort_songs();
+                self.show_songs();
+            }
+        }
+    }
+
     fn show_songs(&mut self) {
         let items = self.song_items();
         if let Some(ui) = self.ui() {
@@ -1636,6 +2376,7 @@ impl App {
         // Saved songs are already listed; add only what is new.
         let known: HashSet<PathBuf> = self.songs.iter().map(|t| t.path.clone()).collect();
         self.songs.extend(tracks.into_iter().filter(|t| !known.contains(&t.path)));
+        self.sort_songs();
         self.show_songs();
     }
 
@@ -1675,6 +2416,7 @@ impl App {
         let item = self.album_item(&album);
         let total: u64 = self.album_tracks.iter().map(|t| t.duration_ms).sum();
         let info = format!("{} • {}", plural(self.album_tracks.len(), "song", "songs"), long_duration(total));
+        let genre = unitn_core::model::album_genre(&self.album_tracks);
         let tracks: Vec<TrackItem> = self
             .album_tracks
             .iter()
@@ -1686,9 +2428,11 @@ impl App {
             .collect();
         if let Some(ui) = self.ui() {
             ui.set_album(item);
+            ui.set_album_genre(genre.into());
             ui.set_album_info(info.into());
             ui.set_album_tracks(model(tracks));
         }
+        self.sync_thumbs();
     }
 
     pub fn open_artist(&mut self, index: usize) {
@@ -1823,6 +2567,10 @@ impl App {
             .iter()
             .filter(|t| t.is_remote())
             .filter_map(|t| {
+                // Podcast episodes: the audio address is public, keep it as is.
+                if is_episode(t) {
+                    return Some((t.clone(), t.stream_url.clone()?));
+                }
                 let cfg = self.settings.servers.iter().find(|c| servers::owns_track(c, &t.path))?;
                 let stream_ref = servers::stream_ref(cfg, t.stream_url.as_deref()?)?;
                 Some((t.clone(), stream_ref))
@@ -1838,6 +2586,10 @@ impl App {
     /// Gives playlist songs from music servers their stream address.
     fn resolve_server_songs(&self, tracks: &mut [Track]) {
         for t in tracks.iter_mut().filter(|t| t.stream_url.is_none()) {
+            if is_episode(t) {
+                t.stream_url = self.library.remote_stream_ref(&t.path).ok().flatten();
+                continue;
+            }
             let Some(cfg) = self.settings.servers.iter().find(|c| servers::owns_track(c, &t.path)) else { continue };
             if let Ok(Some(stream_ref)) = self.library.remote_stream_ref(&t.path) {
                 t.stream_url = Some(servers::stream_url(cfg, &stream_ref));
@@ -1865,6 +2617,18 @@ impl App {
             ui.set_playlist_info(info.into());
             ui.set_playlist_tracks(model(items));
         }
+    }
+
+    /// Moves a song of the open playlist to another position and saves it.
+    pub fn move_playlist_track(&mut self, from: usize, to: usize) {
+        let Some(id) = self.current_playlist_id() else { return };
+        if from == to || from >= self.playlist_tracks.len() || to >= self.playlist_tracks.len() {
+            return;
+        }
+        if let Err(e) = self.library.move_in_playlist(id, from, to) {
+            self.show_toast(&format!("Could not move the song: {e}"));
+        }
+        self.open_playlist_id(id);
     }
 
     fn create_playlist_with(&mut self, base: &str, paths: &[PathBuf]) -> Option<i64> {
@@ -2409,19 +3173,26 @@ impl App {
     pub fn albums_visible(&mut self, first: usize, last: usize) {
         let Some(model) = self.albums_model.clone() else { return };
         let end = last.min(self.album_origins.len().saturating_sub(1));
+        let mut found_any = false;
         for i in first..=end {
             let Some(Some((key, sa))) = self.album_origins.get(i).cloned() else { continue };
-            let cover = match self.albums.get(i).and_then(|a| a.cover.clone()) {
-                Some(c) => Some(c),
-                None => {
-                    let found = scanner::cached_cover(&self.paths.covers.join("servers"), &server_cover_key(&key, &sa.id));
-                    if let (Some(album), Some(c)) = (self.albums.get_mut(i), &found) {
-                        album.cover = Some(c.clone());
+            if self.albums.get(i).is_some_and(|a| a.cover.is_some()) {
+                continue;
+            }
+            match scanner::cached_cover(&self.paths.covers.join("servers"), &server_cover_key(&key, &sa.id)) {
+                // Saved before: shown as a small copy like every other cover
+                // on screen (see `sync_thumbs`).
+                Some(c) => {
+                    if let Some(album) = self.albums.get_mut(i) {
+                        album.cover = Some(c);
+                        found_any = true;
                     }
-                    found
                 }
-            };
-            self.show_or_fetch_cover(&model, i, &key, &sa, cover);
+                None => self.show_or_fetch_cover(&model, i, &key, &sa, None),
+            }
+        }
+        if found_any {
+            self.sync_thumbs();
         }
     }
 
@@ -2512,31 +3283,30 @@ impl App {
     }
 
     fn on_server_cover(&mut self, key: String, id: String, path: PathBuf) {
-        let (image, has) = self.cover(&Some(path.clone()));
-        if !has {
-            return;
-        }
-        let set = |model: &Rc<VecModel<AlbumItem>>, i: usize| {
-            if let Some(mut row) = model.row_data(i) {
-                row.cover = image.clone();
-                row.has_cover = true;
-                model.set_row_data(i, row);
-            }
-        };
-        if let Some(model) = &self.albums_model {
-            for (i, o) in self.album_origins.iter().enumerate() {
-                if matches!(o, Some((k, a)) if *k == key && a.id == id) {
-                    set(model, i);
-                    if let Some(album) = self.albums.get_mut(i) {
-                        album.cover = Some(path.clone());
-                    }
+        // In the library grid the cover is shown as a small copy, like every
+        // other cover on screen (see `sync_thumbs`).
+        let mut in_library = false;
+        for (i, o) in self.album_origins.iter().enumerate() {
+            if matches!(o, Some((k, a)) if *k == key && a.id == id) {
+                if let Some(album) = self.albums.get_mut(i) {
+                    album.cover = Some(path.clone());
+                    in_library = true;
                 }
             }
         }
+        if in_library {
+            self.sync_thumbs();
+        }
+        // The server's own page.
         let open = self.server.index.and_then(|i| self.settings.servers.get(i)).map(server_key);
-        if let (Some(model), Some(true)) = (&self.server.model, open.map(|k| k == key)) {
+        if let (Some(model), Some(true)) = (self.server.model.clone(), open.map(|k| k == key)) {
             if let Some(i) = self.server.shown.iter().position(|a| a.id == id) {
-                set(model, i);
+                let (image, has) = self.cover(&Some(path));
+                if let (true, Some(mut row)) = (has, model.row_data(i)) {
+                    row.cover = image;
+                    row.has_cover = true;
+                    model.set_row_data(i, row);
+                }
             }
         }
     }
@@ -2594,6 +3364,7 @@ impl App {
             track_count: tracks.len() as u32,
             duration_ms: tracks.iter().map(|t| t.duration_ms).sum(),
             cover: tracks.first().and_then(|t| t.cover.clone()).or_else(|| self.server_cover_of(album)),
+            added: 0,
         }
     }
 
@@ -2846,6 +3617,12 @@ impl App {
     /// Songs the open menu refers to.
     fn menu_tracks(&self) -> Vec<Track> {
         let (context, index) = self.menu_target;
+        self.list_tracks(context, index)
+    }
+
+    /// Song `index` of a song list (0 album, 1 songs, 2 playlist), or the
+    /// whole open album (3).
+    fn list_tracks(&self, context: i32, index: i32) -> Vec<Track> {
         let pick = |list: &Vec<Track>| list.get(index.max(0) as usize).cloned().into_iter().collect::<Vec<_>>();
         match context {
             0 => pick(&self.album_tracks),
@@ -2864,13 +3641,38 @@ impl App {
             return self.open_fix_dialog();
         }
         let tracks = self.menu_tracks();
+        if action == 6 || action == 7 {
+            let index = self.menu_target.1.max(0) as usize;
+            let to = if action == 6 { 0 } else { self.playlist_tracks.len().saturating_sub(1) };
+            return self.move_playlist_track(index, to);
+        }
+        if action == 4 {
+            let (Some(id), index) = (self.current_playlist_id(), self.menu_target.1) else { return };
+            if let Err(e) = self.library.remove_from_playlist(id, index.max(0) as usize) {
+                self.show_toast(&format!("Could not remove: {e}"));
+            }
+            self.open_playlist_id(id);
+            return;
+        }
+        self.add_tracks(tracks, action, playlist);
+    }
+
+    /// 0 play next, 1 add to the queue, 2 add to playlist `playlist`,
+    /// 3 make a new playlist of them.
+    fn add_tracks(&mut self, tracks: Vec<Track>, action: i32, playlist: i32) {
         if tracks.is_empty() {
             return;
         }
         if matches!(action, 2 | 3) {
             self.remember_server_songs(&tracks);
         }
-        let what = if tracks.len() == 1 { format!("\"{}\"", tracks[0].title) } else { plural(tracks.len(), "song", "songs") };
+        let what = if tracks.len() == 1 {
+            format!("\"{}\"", tracks[0].title)
+        } else if tracks.iter().all(is_episode) {
+            plural(tracks.len(), "episode", "episodes")
+        } else {
+            plural(tracks.len(), "song", "songs")
+        };
         let paths: Vec<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
         let from_selection = self.menu_target.0 == 4;
         match action {
@@ -2904,13 +3706,6 @@ impl App {
                     let name = self.playlists.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
                     self.show_toast(&format!("Created \"{name}\" with {what}"));
                 }
-            }
-            4 => {
-                let (Some(id), index) = (self.current_playlist_id(), self.menu_target.1) else { return };
-                if let Err(e) = self.library.remove_from_playlist(id, index.max(0) as usize) {
-                    self.show_toast(&format!("Could not remove: {e}"));
-                }
-                self.open_playlist_id(id);
             }
             _ => {}
         }
@@ -3024,6 +3819,61 @@ impl App {
     }
 
     // ------------------------------------------------------------------
+    // Drag and drop (desktop): songs, albums, artists and podcasts dragged
+    // onto a sidebar playlist or the queue. A drag carries
+    // "unitn:<what>", where <what> is set in the UI (see Dnd in widgets.slint).
+    // ------------------------------------------------------------------
+
+    /// The songs (or podcast episodes) a drag carries.
+    fn dragged_tracks(&mut self, what: &str) -> Vec<Track> {
+        let parts: Vec<&str> = what.split(':').collect();
+        let num = |i: usize| parts.get(i).and_then(|p| p.parse::<i32>().ok()).unwrap_or(-1);
+        match parts.first().copied().unwrap_or("") {
+            "song" => self.list_tracks(num(1), num(2)),
+            "album" => {
+                let Some(album) = self.albums.get(num(1).max(0) as usize) else { return Vec::new() };
+                self.library.album_tracks(&album.artist, &album.title).unwrap_or_default()
+            }
+            "artist" => {
+                let Some(artist) = self.artists.get(num(1).max(0) as usize) else { return Vec::new() };
+                let albums = self.library.albums(Some(&artist.name)).unwrap_or_default();
+                albums.iter().flat_map(|a| self.library.album_tracks(&a.artist, &a.title).unwrap_or_default()).collect()
+            }
+            "show" => {
+                // A whole show: its unplayed episodes, newest first (as listed).
+                let Some(feed) = self.podcasts.get(num(1).max(0) as usize).map(|p| p.show.feed_url.clone()) else {
+                    return Vec::new();
+                };
+                let episodes = self.library.episodes(&feed).unwrap_or_default();
+                episodes.iter().filter(|e| !e.played).take(50).filter_map(|e| self.episode_track(&feed, e)).collect()
+            }
+            "episode" => {
+                let Some(feed) = self.podcast_feed.clone() else { return Vec::new() };
+                let Some(state) = self.podcast_episodes.get(num(1).max(0) as usize).cloned() else { return Vec::new() };
+                self.episode_track(&feed, &state).into_iter().collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Something was dropped on the queue (-1), the "new playlist" button
+    /// (-2) or sidebar playlist `target`.
+    pub fn drop_items(&mut self, payload: &str, target: i32) {
+        let Some(what) = payload.strip_prefix(DRAG_PREFIX) else { return };
+        let tracks = self.dragged_tracks(what);
+        log(format!("ui: dragged {what} ({} songs) to {target}", tracks.len()));
+        if tracks.is_empty() {
+            self.show_toast("Nothing to add");
+            return;
+        }
+        match target {
+            -1 => self.add_tracks(tracks, 1, -1),
+            -2 => self.add_tracks(tracks, 3, -1),
+            i => self.add_tracks(tracks, 2, i),
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Radio
     // ------------------------------------------------------------------
 
@@ -3050,19 +3900,149 @@ impl App {
         }
     }
 
-    /// The Popular, Favorites and Hungary chips. Popular clears every filter;
-    /// Favorites and Hungary switch on and off.
+    /// The Popular and Favorites chips. Popular clears every filter;
+    /// Favorites switches on and off.
     pub fn load_radio_tab(&mut self, tab: i32) {
         match tab {
             RADIO_TAB_FAVORITES => self.radio_favorites = !self.radio_favorites,
-            RADIO_TAB_HUNGARY => self.radio_hungary = !self.radio_hungary,
             _ => {
                 self.radio_favorites = false;
-                self.radio_hungary = false;
                 self.radio_genres = [false; RADIO_GENRES.len()];
+                self.radio_country = None;
+                self.radio_language = None;
+                self.radio_tag = None;
+                self.radio_codec = None;
+                self.radio_bitrate = 0;
                 self.radio_query.clear();
             }
         }
+        self.refresh_radio();
+    }
+
+    /// The filters of the Radio page as a directory search.
+    fn radio_filter(&self) -> unitn_core::radio::Filter {
+        let mut tags = self.selected_genres();
+        if let Some((tag, _)) = &self.radio_tag {
+            // A picked tag narrows the genre chips: with both, look for the tag.
+            tags = vec![tag.clone()];
+        }
+        unitn_core::radio::Filter {
+            name: self.radio_query.clone(),
+            tags,
+            country: self.radio_country.as_ref().map(|(v, _)| v.clone()),
+            language: self.radio_language.as_ref().map(|(v, _)| v.clone()),
+            codec: self.radio_codec.as_ref().map(|(v, _)| v.clone()),
+            bitrate_min: self.radio_bitrate,
+        }
+    }
+
+    /// Labels of the browse buttons ("Country" or the picked one) and which
+    /// of them have something picked.
+    fn radio_filter_labels(&self) -> (Vec<SharedString>, Vec<bool>) {
+        let picked = [&self.radio_country, &self.radio_language, &self.radio_tag, &self.radio_codec];
+        let mut labels = Vec::new();
+        let mut active = Vec::new();
+        for (i, name) in RADIO_FILTER_NAMES.iter().enumerate() {
+            let label = match picked.get(i) {
+                Some(Some((_, shown))) => Some(shown.clone()),
+                Some(None) => None,
+                None if self.radio_bitrate > 0 => Some(format!("{}+ kbps", self.radio_bitrate)),
+                None => None,
+            };
+            active.push(label.is_some());
+            labels.push(label.unwrap_or_else(|| name.to_string()).into());
+        }
+        (labels, active)
+    }
+
+    /// Opens a browse list: loads it from the directory the first time.
+    pub fn radio_open_picker(&mut self, which: i32) {
+        self.radio_picker = which;
+        self.radio_picker_query.clear();
+        if let Some(ui) = self.ui() {
+            ui.set_radio_picker_title(RADIO_FILTER_NAMES.get(which.max(0) as usize).copied().unwrap_or("").into());
+            ui.set_radio_picker_query("".into());
+        }
+        if let Some(kind) = facet_kind(which) {
+            let slot = which as usize;
+            if self.radio_facets[slot].is_none() {
+                if let Some(ui) = self.ui() {
+                    ui.set_radio_picker_loading(true);
+                    ui.set_radio_picker_items(model(Vec::new()));
+                }
+                let radio = self.radio.clone();
+                let tx = self.bg_tx.clone();
+                thread::spawn(move || {
+                    let result = radio.facets(kind).map_err(|e| format!("{e:#}"));
+                    let _ = tx.send(Bg::RadioFacets { kind, result });
+                });
+                return;
+            }
+        }
+        self.fill_radio_picker();
+    }
+
+    /// Narrows the open browse list to what's typed in its search box.
+    pub fn radio_picker_search(&mut self, text: &str) {
+        self.radio_picker_query = text.trim().to_lowercase();
+        self.fill_radio_picker();
+    }
+
+    /// Shows the rows of the open browse list: "Any" first, then the
+    /// countries (or languages…) with the most stations.
+    fn fill_radio_picker(&mut self) {
+        let which = self.radio_picker;
+        let mut rows: Vec<Option<(String, String)>> = vec![None];
+        let mut items: Vec<SharedString> = vec!["Any".into()];
+        if which == RADIO_PICK_BITRATE {
+            for kbps in RADIO_BITRATES.iter().skip(1) {
+                rows.push(Some((kbps.to_string(), format!("{kbps}+ kbps"))));
+                items.push(format!("{kbps} kbps or better").into());
+            }
+        } else if let Some(Some(facets)) = self.radio_facets.get(which.max(0) as usize) {
+            let query = &self.radio_picker_query;
+            for f in facets.iter().filter(|f| query.is_empty() || f.name.to_lowercase().contains(query.as_str())).take(RADIO_PICKER_ROWS) {
+                rows.push(Some((f.value.clone(), f.name.clone())));
+                items.push(format!("{}  ·  {}", f.name, f.stations).into());
+            }
+        }
+        self.radio_picker_rows = rows;
+        if let Some(ui) = self.ui() {
+            ui.set_radio_picker_loading(false);
+            ui.set_radio_picker_items(model(items));
+        }
+    }
+
+    /// A browse list arrived from the directory.
+    fn radio_facets_loaded(&mut self, kind: unitn_core::radio::FacetKind, result: Result<Vec<unitn_core::radio::Facet>, String>) {
+        let slot = facet_slot(kind);
+        match result {
+            Ok(list) => self.radio_facets[slot] = Some(list),
+            Err(e) => {
+                self.show_toast(&format!("Could not load the list: {e}"));
+                if let Some(ui) = self.ui() {
+                    ui.set_radio_picker_loading(false);
+                }
+                return;
+            }
+        }
+        if self.radio_picker == slot as i32 {
+            self.fill_radio_picker();
+        }
+    }
+
+    /// A row of the open browse list was picked.
+    pub fn radio_picker_pick(&mut self, index: usize) {
+        let Some(row) = self.radio_picker_rows.get(index).cloned() else { return };
+        match self.radio_picker {
+            RADIO_PICK_COUNTRY => self.radio_country = row,
+            RADIO_PICK_LANGUAGE => self.radio_language = row,
+            RADIO_PICK_TAG => self.radio_tag = row,
+            RADIO_PICK_CODEC => self.radio_codec = row,
+            RADIO_PICK_BITRATE => self.radio_bitrate = row.and_then(|(v, _)| v.parse().ok()).unwrap_or(0),
+            _ => return,
+        }
+        self.radio_picker = -1;
         self.refresh_radio();
     }
 
@@ -3071,11 +4051,13 @@ impl App {
     }
 
     /// Shows the stations for the current filters. Selected genres combine
-    /// with OR (jazz or rock), the other filters with AND (Hungarian and jazz
+    /// with OR (jazz or rock), the other filters with AND (German and jazz
     /// or rock, among the favorites, matching the search).
     fn refresh_radio(&mut self) {
-        let genres = self.selected_genres();
-        let filtered = self.radio_hungary || !genres.is_empty();
+        let mut filter = self.radio_filter();
+        filter.name.clear();
+        let filtered = !filter.is_empty();
+        let (labels, active) = self.radio_filter_labels();
         self.radio_tab = if self.radio_favorites {
             RADIO_TAB_FAVORITES
         } else if filtered || !self.radio_query.is_empty() {
@@ -3085,20 +4067,25 @@ impl App {
         };
         if let Some(ui) = self.ui() {
             ui.set_radio_tab(self.radio_tab);
-            ui.set_radio_hungary(self.radio_hungary);
+            ui.set_radio_filter_labels(model(labels));
+            ui.set_radio_filter_active(model(active));
             ui.set_radio_filtered(filtered);
             ui.set_radio_genres(model(self.radio_genres.to_vec()));
         }
         if self.radio_favorites {
             self.radio_request += 1; // cancel pending network results
-            let hungary = self.radio_hungary;
+            // Saved favorites know their country by name, not by code, and
+            // don't know their language.
+            let country = self.radio_country.as_ref().map(|(_, name)| name.clone());
             let favorites: Vec<Station> = self
                 .library
                 .favorite_stations()
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|s| !hungary || s.country.eq_ignore_ascii_case("hungary"))
-                .filter(|s| genres.is_empty() || genres.iter().any(|g| s.has_tag(g)))
+                .filter(|s| country.as_ref().map_or(true, |c| s.country.eq_ignore_ascii_case(c)))
+                .filter(|s| filter.tags.is_empty() || filter.tags.iter().any(|g| s.has_tag(g)))
+                .filter(|s| filter.codec.as_ref().map_or(true, |c| s.codec.eq_ignore_ascii_case(c)))
+                .filter(|s| s.bitrate >= filter.bitrate_min)
                 .collect();
             let status = if favorites.is_empty() && filtered {
                 "No favorites match these filters".to_string()
@@ -3109,11 +4096,7 @@ impl App {
         } else if self.radio_tab == RADIO_TAB_POPULAR {
             self.fetch_stations(StationQuery::Top);
         } else {
-            self.fetch_stations(StationQuery::Filtered {
-                name: self.radio_query.clone(),
-                tags: genres,
-                country: self.radio_hungary.then(|| "HU".to_string()),
-            });
+            self.fetch_stations(StationQuery::Filtered(self.radio_filter()));
         }
     }
 
@@ -3129,10 +4112,10 @@ impl App {
         thread::spawn(move || {
             let result = match query {
                 StationQuery::Top => radio.top(RADIO_LIMIT),
-                StationQuery::Filtered { name, tags, country } => {
-                    // A whole country fits in one longer list.
-                    let limit = if tags.is_empty() && name.is_empty() { 300 } else { RADIO_LIMIT };
-                    radio.filtered(&name, &tags, country.as_deref(), limit)
+                StationQuery::Filtered(filter) => {
+                    // A whole country or language fits in one longer list.
+                    let limit = if filter.tags.is_empty() && filter.name.is_empty() { 300 } else { RADIO_LIMIT };
+                    radio.filtered(&filter, limit)
                 }
             }
             .map_err(|e| format!("{e:#}"));
@@ -3316,6 +4299,7 @@ impl App {
     fn play_index(&mut self, index: usize) {
         let Some(item) = self.queue.get(index).cloned() else { return };
         self.logged_second = -1;
+        self.start_listen(&item);
         self.mark_current(Some(index));
         self.position = 0.0;
         self.stream_title.clear();
@@ -3335,6 +4319,7 @@ impl App {
         self.refresh_now_playing();
         self.refresh_position();
         self.update_next();
+        self.save_session();
     }
 
     /// Files or folders dropped on the window: audio files play right away,
@@ -3685,8 +4670,9 @@ impl App {
                     album_key(t.grouping_artist(), &t.album)
                 };
                 ui.set_playing_album(album.into());
-                self.media.set_metadata(&t.title, &t.artist, &t.album, self.duration);
-                self.update_backdrop(t.grouping_artist());
+                self.media.set_metadata(&t.title, &t.artist, &t.album, t.cover.as_deref(), self.duration);
+                let song = (!t.is_remote()).then(|| t.path.clone());
+                self.update_backdrop(t.grouping_artist(), song.as_deref());
             }
             Some(Item::Station(s)) => {
                 let (title, subtitle) = if self.stream_title.is_empty() {
@@ -3703,7 +4689,7 @@ impl App {
                 ui.set_has_track(true);
                 ui.set_current_key(station_key(&s).into());
                 ui.set_playing_album(SharedString::new());
-                self.media.set_metadata(&title, &s.name, "", None);
+                self.media.set_metadata(&title, &s.name, "", None, None);
                 self.show_backdrop(None);
             }
             None => {
@@ -3743,6 +4729,177 @@ impl App {
         self.update_next();
     }
 
+    pub fn set_resume_session(&mut self, on: bool) {
+        self.settings.resume_session = on;
+        self.save_settings();
+        self.save_session();
+        if let Some(ui) = self.ui() {
+            ui.set_resume_session(on);
+        }
+    }
+
+    /// Saves the queue, the current song and the position for the next start
+    /// (or removes the saved one when "Continue where I left off" is off).
+    // ------------------------------------------------------------------
+    // Statistics
+    // ------------------------------------------------------------------
+
+    /// A new song starts: the one before is written down if it was heard
+    /// long enough. Radio and podcast episodes aren't counted.
+    fn start_listen(&mut self, item: &Item) {
+        self.finish_listen();
+        self.listen = match item {
+            Item::Track(t) if !is_episode(t) => Some(Listen { track: t.clone(), heard: 0.0, last: 0.0 }),
+            _ => None,
+        };
+    }
+
+    /// The playback position moved: time played on (not jumps) is heard.
+    fn note_listening(&mut self, position: f64) {
+        let playing = self.state == PlayState::Playing;
+        if let Some(l) = self.listen.as_mut() {
+            let step = position - l.last;
+            if playing && step > 0.0 && step <= 2.5 {
+                l.heard += step;
+            }
+            l.last = position;
+        }
+    }
+
+    /// Writes down the current song as played if it was heard for 30
+    /// seconds (half of a short song). Also called when the app closes.
+    pub fn finish_listen(&mut self) {
+        let Some(l) = self.listen.take() else { return };
+        if l.heard < unitn_core::library::count_threshold(l.track.duration_secs()) {
+            return;
+        }
+        if let Err(e) = self.library.record_play(&l.track, l.heard, unix_now()) {
+            log(&format!("statistics: could not record a play: {e:#}"));
+        }
+        if self.page == PAGE_STATS {
+            self.refresh_stats();
+        }
+    }
+
+    pub fn set_stats_period(&mut self, period: i32) {
+        self.stats_period = period;
+        self.refresh_stats();
+    }
+
+    /// Fills the Statistics page.
+    fn refresh_stats(&mut self) {
+        let now = unix_now();
+        let since = if self.stats_period == 0 { now - i64::from(STATS_DAYS) * 86_400 } else { 0 };
+        let stats = self.library.play_stats(since, STATS_TOP).unwrap_or_default();
+        let totals = self.library.library_totals().unwrap_or_default();
+        let days = self.library.listening_per_day(STATS_DAYS, now).unwrap_or_default();
+        let empty = self.library.play_count().unwrap_or(0) == 0;
+
+        let tile = |value: String, label: &str| StatTile { value: value.into(), label: label.into() };
+        let first = |rows: &[unitn_core::library::Ranked]| rows.first().map(|r| r.name.clone()).unwrap_or_else(|| "—".into());
+        let tiles = vec![
+            tile(grouped(stats.plays), "Plays"),
+            tile(long_time(stats.listened_secs), "Listening time"),
+            tile(first(&stats.artists), "Top artist"),
+            tile(first(&stats.genres), "Top genre"),
+        ];
+        let library = vec![
+            tile(grouped(totals.songs), "Songs"),
+            tile(grouped(totals.albums), "Albums"),
+            tile(grouped(totals.artists), "Artists"),
+            tile(grouped(totals.genres), "Genres"),
+            tile(long_time(totals.duration_secs), "To listen to it all"),
+        ];
+        let rows = |list: &[unitn_core::library::Ranked]| -> Vec<StatRow> {
+            let most = list.first().map_or(1, |r| r.plays.max(1)) as f32;
+            list.iter()
+                .map(|r| StatRow {
+                    name: r.name.as_str().into(),
+                    detail: r.detail.as_str().into(),
+                    count: plural(r.plays as usize, "play", "plays").into(),
+                    share: r.plays as f32 / most,
+                })
+                .collect()
+        };
+        let busiest = days.iter().map(|(_, s)| *s).max().unwrap_or(0).max(1) as f32;
+        let days_total: u64 = days.iter().map(|(_, s)| *s).sum();
+        let count = days.len();
+        let bars: Vec<DayBar> = days
+            .iter()
+            .enumerate()
+            .map(|(i, (day, secs))| {
+                // "2026-11-25": label every fifth day and today.
+                let day_no = day.get(8..10).unwrap_or("").trim_start_matches('0').to_string();
+                let label = if i + 1 == count || (count - 1 - i) % 5 == 0 { day_no.clone() } else { String::new() };
+                let tip = format!("{} · {}", short_date(day), if *secs > 0 { long_time(*secs) } else { "nothing".into() });
+                DayBar { label: label.into(), share: *secs as f32 / busiest, tip: tip.into() }
+            })
+            .collect();
+
+        let Some(ui) = self.ui() else { return };
+        ui.set_stats_period(self.stats_period);
+        ui.set_stats_tiles(model(tiles));
+        ui.set_stats_library(model(library));
+        ui.set_stats_days(model(bars));
+        ui.set_stats_days_total(format!("{} in total", long_time(days_total)).into());
+        ui.set_stats_songs(model(rows(&stats.songs)));
+        ui.set_stats_artists(model(rows(&stats.artists)));
+        ui.set_stats_albums(model(rows(&stats.albums)));
+        ui.set_stats_genres(model(rows(&stats.genres)));
+        ui.set_stats_empty(empty);
+    }
+
+    pub fn save_session(&self) {
+        let path = &self.paths.session;
+        if !self.settings.resume_session || self.current.is_none() {
+            let _ = std::fs::remove_file(path);
+            return;
+        }
+        let session = Session { queue: self.queue.clone(), current: self.current, position: self.position };
+        let Ok(json) = serde_json::to_vec(&session) else { return };
+        // Write to a temporary file first, so a crash can't leave half a file.
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, path);
+        }
+    }
+
+    /// Puts the last session's song back on the player, paused; Play
+    /// continues where it was.
+    pub fn restore_session(&mut self) {
+        if !self.settings.resume_session {
+            return;
+        }
+        let Ok(data) = std::fs::read(&self.paths.session) else { return };
+        let Ok(session) = serde_json::from_slice::<Session>(&data) else {
+            log("session: could not read the saved session");
+            return;
+        };
+        let Some(current) = session.current.filter(|&i| i < session.queue.len()) else { return };
+        // A local song that's gone (moved or deleted) can't continue.
+        if let Item::Track(t) = &session.queue[current] {
+            if !t.is_remote() && !is_episode(t) && !t.path.is_file() {
+                log("session: the last song's file is gone; not restoring");
+                return;
+            }
+        }
+        log(format!("session: restoring {} song(s), at {:.0} s", session.queue.len(), session.position));
+        self.queue = session.queue;
+        self.rebuild_queue_model();
+        self.mark_current(Some(current));
+        self.position = 0.0;
+        if let Item::Track(t) = &self.queue[current] {
+            self.duration = Some(t.duration_secs()).filter(|d| *d > 0.0);
+            if session.position > 3.0 {
+                self.position = session.position;
+                self.resume_at = Some((t.path.clone(), session.position));
+            }
+        }
+        self.refresh_now_playing();
+        self.refresh_position();
+        self.update_next();
+    }
+
     pub fn set_startup_sound(&mut self, on: bool) {
         self.settings.startup_sound = on;
         self.save_settings();
@@ -3771,9 +4928,57 @@ impl App {
         self.load_lyrics();
     }
 
+    /// The current song, if it's a file on this computer (not a server
+    /// song, a podcast episode or a radio station).
+    fn current_local_song(&self) -> Option<PathBuf> {
+        match self.current_item() {
+            Some(Item::Track(t)) if !t.is_remote() && !is_episode(t) && t.path.is_file() => Some(t.path.clone()),
+            _ => None,
+        }
+    }
+
+    /// Saves the shown lyrics with the song: `kind` 0 as a file next to it
+    /// (.lrc or .txt), 1 in the song's tags. `auto`: from the "Save lyrics
+    /// found online" setting (only a short note when it worked).
+    pub fn save_lyrics(&mut self, kind: i32, auto: bool) {
+        let (Some(song), Some(found)) = (self.current_local_song(), self.lyrics.clone()) else { return };
+        if found.instrumental || found.lines.is_empty() {
+            return;
+        }
+        let result = if kind == 0 {
+            lyrics::save_sidecar(&song, &found).map(|f| {
+                let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                format!("Lyrics saved as {name}")
+            })
+        } else {
+            lyrics::save_to_tags(&song, &found).map(|_| "Lyrics saved in the song".to_string())
+        };
+        match result {
+            Ok(msg) => {
+                log(format!("lyrics: {msg} ({})", song.display()));
+                if !auto {
+                    self.show_toast(&msg);
+                }
+            }
+            Err(e) => {
+                log(format!("lyrics: saving failed for {}: {e:#}", song.display()));
+                self.show_toast(&format!("Couldn't save the lyrics: {e}"));
+            }
+        }
+    }
+
+    pub fn set_lyrics_autosave(&mut self, value: i32) {
+        self.settings.lyrics_autosave = value.clamp(0, 3) as u8;
+        self.save_settings();
+        if let Some(ui) = self.ui() {
+            ui.set_lyrics_autosave(self.settings.lyrics_autosave as i32);
+        }
+    }
+
     fn show_lyrics(&mut self, lines: Vec<String>, synced: bool, source: &str, status: &str) {
         self.lyrics_line = None;
         if let Some(ui) = self.ui() {
+            ui.set_lyrics_can_save(false);
             ui.set_lyrics_lines(model(lines.into_iter().map(SharedString::from).collect()));
             ui.set_lyrics_synced(synced);
             ui.set_lyrics_source(source.into());
@@ -3785,7 +4990,7 @@ impl App {
 
     /// Finds lyrics for the current song when the lyrics panel is open.
     fn load_lyrics(&mut self) {
-        if !self.settings.lyrics_open {
+        if !self.lyrics_wanted() {
             return;
         }
         let track = match self.current_item().cloned() {
@@ -3834,6 +5039,22 @@ impl App {
                 let (synced, source) = (l.synced, l.source.clone());
                 self.lyrics = Some(l);
                 self.show_lyrics(lines, synced, &source, "");
+                // Lyrics from LRCLIB for a song on this computer can be kept with it.
+                let savable = source == "LRCLIB" && self.current_local_song().is_some();
+                if let Some(ui) = self.ui() {
+                    ui.set_lyrics_can_save(savable);
+                }
+                if savable {
+                    match self.settings.lyrics_autosave {
+                        1 => self.save_lyrics(0, true),
+                        2 => self.save_lyrics(1, true),
+                        3 => {
+                            self.save_lyrics(0, true);
+                            self.save_lyrics(1, true);
+                        }
+                        _ => {}
+                    }
+                }
             }
             None => {
                 let status = if failed {
@@ -4149,13 +5370,11 @@ impl App {
         self.podcast_back();
     }
 
-    pub fn podcast_play(&mut self, index: usize) {
-        let Some(feed) = self.podcast_feed.clone() else { return };
-        let Some(state) = self.podcast_episodes.get(index).cloned() else { return };
-        let Some(show) = self.podcasts.iter().find(|p| p.show.feed_url == feed).cloned() else { return };
+    /// A podcast episode as something the player (and playlists) can take.
+    fn episode_track(&mut self, feed: &str, state: &EpisodeState) -> Option<Track> {
+        let show = self.podcasts.iter().find(|p| p.show.feed_url == feed)?;
         let ep = &state.episode;
-        let key = Self::episode_key(&feed, &ep.guid);
-        self.episode_keys.insert(key.clone(), (feed.clone(), ep.guid.clone()));
+        let key = Self::episode_key(feed, &ep.guid);
         let track = Track {
             path: key.clone(),
             title: ep.title.clone(),
@@ -4168,6 +5387,15 @@ impl App {
             stream_ext: ep.extension(),
             ..Default::default()
         };
+        self.episode_keys.insert(key, (feed.to_string(), ep.guid.clone()));
+        Some(track)
+    }
+
+    pub fn podcast_play(&mut self, index: usize) {
+        let Some(feed) = self.podcast_feed.clone() else { return };
+        let Some(state) = self.podcast_episodes.get(index).cloned() else { return };
+        let Some(track) = self.episode_track(&feed, &state) else { return };
+        let key = track.path.clone();
         // Continue where it was left (unless it was finished).
         self.resume_at = (!state.played && state.position > 10.0).then(|| (key, state.position));
         self.episode_saved_at = if self.resume_at.is_some() { state.position } else { 0.0 };
@@ -4235,6 +5463,20 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
         }};
     }
 
+    // Drag and drop inside the window (songs etc. onto playlists and the queue).
+    let dnd = ui.global::<Dnd>();
+    dnd.on_payload(|what| slint::DataTransfer::from(SharedString::from(format!("{DRAG_PREFIX}{what}"))));
+    dnd.on_ours(|data| data.plain_text().is_ok_and(|t| t.starts_with(DRAG_PREFIX)));
+    {
+        let app = app.clone();
+        dnd.on_dropped(move |data, target| {
+            let Ok(text) = data.plain_text() else { return };
+            // Later, so the drag has fully ended before lists are rebuilt.
+            let app = app.clone();
+            slint::Timer::single_shot(Duration::ZERO, move || with(&app, |a| a.drop_items(&text, target)));
+        });
+    }
+
     on!(on_open_album, |a, i| a.open_album(i.max(0) as usize));
     on!(on_open_artist, |a, i| a.open_artist(i.max(0) as usize));
     on!(on_show_all_albums, |a| a.show_all_albums());
@@ -4254,6 +5496,9 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_rescan, |a| a.start_scan());
     on!(on_radio_select_tab, |a, t| a.load_radio_tab(t));
     on!(on_radio_genre, |a, g| a.radio_genre(g.max(0) as usize));
+    on!(on_radio_open_picker, |a, k| a.radio_open_picker(k));
+    on!(on_radio_picker_pick, |a, i| a.radio_picker_pick(i.max(0) as usize));
+    on!(on_radio_picker_search, |a, t| a.radio_picker_search(t.as_str()));
     on!(on_add_custom_stream, |a, name, url| a.add_custom_stream(name.as_str(), url.as_str()));
     on!(on_play_station, |a, i| a.play_station(i.max(0) as usize));
     on!(on_toggle_favorite, |a, i| a.toggle_favorite(i.max(0) as usize));
@@ -4261,6 +5506,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_remove_queue_index, |a, i| a.remove_queue_index(i.max(0) as usize));
     on!(on_clear_queue, |a| a.clear_queue());
     on!(on_move_queue_index, |a, from, to| a.move_queue_item(from.max(0) as usize, to.max(0) as usize));
+    on!(on_move_playlist_track, |a, from, to| a.move_playlist_track(from.max(0) as usize, to.max(0) as usize));
     on!(on_toggle_play, |a| a.toggle_play());
     on!(on_next, |a| {
         log("player: next song (asked)");
@@ -4297,6 +5543,15 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_play_playlist_track, |a, i| a.play_playlist_track(i.max(0) as usize));
     on!(on_save_queue_as_playlist, |a| a.save_queue_as_playlist());
     on!(on_toggle_like, |a| a.toggle_like());
+    on!(on_toggle_mini_player, |a| a.toggle_mini_player());
+    on!(on_toggle_mini_lyrics, |a| a.toggle_mini_lyrics());
+    on!(on_set_sort, |a, page, index| a.set_sort(page, index.max(0) as usize));
+    on!(on_sort_ignore_articles_changed, |a, on| a.set_sort_ignore_articles(on));
+    on!(on_page_changed, |a, page| a.page_changed(page));
+    on!(on_stats_period_changed, |a, p| a.set_stats_period(p));
+    on!(on_album_range, |a, first, last| a.set_album_range(first, last));
+    on!(on_artist_range, |a, first, last| a.set_artist_range(first, last));
+    on!(on_flip_sort, |a, page| a.flip_sort(page));
     on!(on_track_menu_requested, |a, c, i| a.track_menu_requested(c, i));
     on!(on_track_menu_action, |a, action, pl| a.track_menu_action(action, pl));
     on!(on_open_server, |a, i| a.open_server(i.max(0) as usize));
@@ -4314,6 +5569,9 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_gapless_albums_changed, |a, on| a.set_gapless_albums(on));
     on!(on_lyrics_online_changed, |a, on| a.set_lyrics_online(on));
     on!(on_startup_sound_changed, |a, on| a.set_startup_sound(on));
+    on!(on_resume_session_changed, |a, on| a.set_resume_session(on));
+    on!(on_save_lyrics, |a, kind| a.save_lyrics(kind, false));
+    on!(on_lyrics_autosave_changed, |a, v| a.set_lyrics_autosave(v));
     on!(on_lyrics_open_changed, |a, open| a.set_lyrics_open(open));
     on!(on_podcast_subscribe, |a, i| a.podcast_subscribe(i.max(0) as usize));
     on!(on_podcast_open, |a, i| a.podcast_open(i.max(0) as usize));
@@ -4439,6 +5697,44 @@ fn open_in_browser(url: &str) -> bool {
             log(format!("could not open the browser: {e}"));
             false
         }
+    }
+}
+
+/// 12345 → "12,345".
+fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Seconds as "3 d 4 h", "5 h 12 min", "12 min" or "40 s".
+fn long_time(secs: u64) -> String {
+    let (d, h, m) = (secs / 86_400, secs / 3600 % 24, secs / 60 % 60);
+    if d > 0 {
+        format!("{d} d {h} h")
+    } else if h > 0 {
+        format!("{h} h {m} min")
+    } else if m > 0 {
+        format!("{m} min")
+    } else {
+        format!("{secs} s")
+    }
+}
+
+/// "2026-11-25" → "Nov 25".
+fn short_date(day: &str) -> String {
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let month = day.get(5..7).and_then(|m| m.parse::<usize>().ok()).and_then(|m| MONTHS.get(m.wrapping_sub(1)));
+    let day_no = day.get(8..10).map(|d| d.trim_start_matches('0')).unwrap_or("");
+    match month {
+        Some(m) => format!("{m} {day_no}"),
+        None => day.to_string(),
     }
 }
 

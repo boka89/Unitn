@@ -2665,6 +2665,7 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png",
@@ -5792,7 +5793,7 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "unitn"
-version = "0.6.2"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "directories",
@@ -5805,11 +5806,12 @@ dependencies = [
  "slint-build",
  "souvlaki",
  "unitn-core",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "unitn-core"
-version = "0.6.2"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "cpal",

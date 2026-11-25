@@ -11,6 +11,7 @@ pub mod model;
 pub mod podcasts;
 pub mod radio;
 pub mod servers;
+pub mod sort;
 pub mod util;
 
 /// User-Agent sent with every HTTP request (Radio Browser asks for a descriptive one).

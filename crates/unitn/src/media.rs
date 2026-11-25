@@ -84,13 +84,16 @@ impl Media {
         }
     }
 
-    pub fn set_metadata(&mut self, title: &str, artist: &str, album: &str, duration: Option<f64>) {
+    /// `cover`: the album art as a local image file, shown in the system's
+    /// media overlay (Windows) / Now Playing widget (macOS, Linux).
+    pub fn set_metadata(&mut self, title: &str, artist: &str, album: &str, cover: Option<&std::path::Path>, duration: Option<f64>) {
+        let cover_url = cover.filter(|p| p.is_file()).map(|p| format!("file://{}", p.display()));
         self.with("set_metadata", |c| {
             if let Err(e) = c.set_metadata(MediaMetadata {
                 title: Some(title),
                 artist: (!artist.is_empty()).then_some(artist),
                 album: (!album.is_empty()).then_some(album),
-                cover_url: None,
+                cover_url: cover_url.as_deref(),
                 duration: duration.filter(|d| d.is_finite() && *d > 0.0).map(Duration::from_secs_f64),
             }) {
                 log(format!("media controls: set_metadata failed: {e:?}"));

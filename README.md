@@ -8,7 +8,7 @@ no account and no tracking.
 
 **Website and downloads: [unitn.bokors.net](https://unitn.bokors.net)**
 
-> Status: v0.6.1 — young but usable. Feedback and contributions welcome.
+> Status: v0.7.1 — young but usable. Feedback and contributions welcome.
 
 ![Unitn playing an album, dark theme](docs/screenshots/dark-playing.png)
 
@@ -26,10 +26,16 @@ no account and no tracking.
 
 - **Local library**: scans your music folders (MP3, FLAC, AAC/M4A, ALAC, OGG Vorbis, WAV, AIFF),
   reading tags and embedded or folder cover art
-- **Albums, Artists and Songs** views with instant search, Apple-style striped track lists,
-  Comfy and Cozy list density, and a play marker on the current song
+- **Albums, Artists and Songs** views (album pages show year and genre) with instant search, Apple-style striped track lists,
+  Comfy and Cozy list density, and a play marker on the current song. Artists are a grid of
+  photos (your own `artist.jpg`, a downloaded photo or an album cover)
+- **Sorting** on every library page, remembered: Albums by artist, title, year or recently
+  added; Artists by name, most albums, most songs or recently added; Songs by artist, title,
+  album, year, length, genre or recently added. Names ignore a leading "The", "A" or "An"
+  (can be turned off in Settings)
 - **Album art**: missing covers are downloaded from the free MusicBrainz / Cover Art Archive,
-  and artist photos (from Wikimedia Commons) appear behind Now Playing
+  and artist photos appear behind Now Playing: your own `artist.jpg` (`.png`, `.webp`) from the
+  artist or album folder if you have one, otherwise a photo from Wikimedia Commons
 - **Fix album info**: search MusicBrainz by hand, pick the right album and cover (or use your
   own image) and correct artist/album names. Your music files are never modified
 - **Music servers**: Jellyfin, Plex, Navidrome and other OpenSubsonic servers. Browse your
@@ -39,13 +45,20 @@ no account and no tracking.
 - **Podcasts**: search Apple's public podcast directory or paste any RSS link, subscribe, and
   play episodes. Unitn remembers where you stopped in each episode and shows what's new
 - **Lyrics** on Now Playing: synced lyrics scroll along with the song and highlight the current
-  line. They come from a `.lrc` file next to the song, from the song's own tags, or online from
-  the free [LRCLIB](https://lrclib.net) (can be turned off)
+  line. They come from a `.lrc` or `.txt` file named like the song (next to it, or in a `Lyrics`
+  subfolder of the album folder), from the song's own tags, or online from the free
+  [LRCLIB](https://lrclib.net) (can be turned off). Lyrics found online can be saved next to the
+  song (`.lrc`/`.txt`) or into its tags, with a button or automatically (Settings)
 - **Internet radio** with ~50,000 stations from the open [Radio Browser](https://www.radio-browser.info),
-  Popular / Favorites / Hungary tabs and your own stream URLs
-- **Playlists**: create, rename, reorder, import/export M3U, and save the queue as a playlist;
-  local songs and songs from your servers can be mixed
-- **Queue** with drag-to-reorder, shuffle, repeat all / repeat one
+  Popular / Favorites, genre chips, browse by country, language, tag, format and bitrate, and your own stream URLs
+- **Playlists**: create, rename, reorder songs (drag the handle, or "Move to top / bottom" in
+  the song menu), import/export M3U, and save the queue as a playlist; local songs and songs from
+  your servers can be mixed
+- **Queue** with drag-to-reorder, shuffle, repeat all / repeat one. Unitn starts where you left
+  off: the queue, the song and the position come back when you open it (can be turned off)
+- **Statistics**: plays and listening time for the last 30 days or all time, top songs,
+  artists, albums and genres, listening time per day and your library's totals. A song counts
+  once you've listened to 30 seconds of it (half of a song shorter than a minute)
 - **Gapless playback** and **crossfade** (2–12 s; optionally keep songs of the same album gapless), and
   whole-file preloading so music from network shares doesn't stutter
 - **Winamp-style 10-band equalizer** with preamp, presets and a live response curve
@@ -53,7 +66,14 @@ no account and no tracking.
   tuned for both themes; the ‹ › buttons (or ← →) switch styles and a button goes full screen. The
   buttons appear when you move the mouse and fade out when it rests
 - **Drag & drop** files, folders and M3U playlists onto the window
-- **Keyboard shortcuts** (Space, ←/→ seek, ⌘/Ctrl+←/→ track, ↑/↓ volume, ⌘/Ctrl+F search …)
+- **Volume** with a mute button (click the speaker, or press M) and mouse-wheel control over the
+  volume bar
+- **Mini player**: a small window with the cover, song, play controls, like, seek bar, volume and
+  optionally a line of synced lyrics; it remembers where you put it
+  that stays on top of other windows (can be unpinned). Open it with the button on the player
+  bar or ⌘/Ctrl+Shift+M; the expand button or a double-click on the cover brings the full window back
+- **Keyboard shortcuts** (Space, ←/→ seek, ⌘/Ctrl+←/→ track, ↑/↓ volume, M mute, ⌘/Ctrl+F search,
+  ⌘/Ctrl+Shift+M mini player …)
 - **Dark and light themes**, or follow the system setting; adjustable window transparency and,
   on macOS, a frosted-glass (blurred) window background
 - **Media keys and OS integration**: macOS Now Playing, Windows media overlay, Linux MPRIS
@@ -98,7 +118,29 @@ Good to know:
   Plex's Settings → Authorized Devices.
 - HTTPS works with properly signed certificates; for self-signed certificates use the server's
   `http://` LAN address.
-- Server songs can't be added to playlists yet.
+
+## Lyrics and artist photos in your music folders
+
+Unitn picks up files you keep with your music; nothing has to be imported:
+
+```
+Music/
+  Artist/
+    artist.jpg            ← artist photo behind Now Playing (.jpg, .jpeg, .png or .webp)
+    Album/
+      cover.jpg           ← album cover (also folder.jpg, front.jpg …, or embedded in the files)
+      01 Song.flac
+      01 Song.lrc         ← lyrics next to the song …
+      Lyrics/             ← … or all of the album's lyrics in a "Lyrics" (or "lyrics") subfolder
+        02 Other song.lrc
+        03 Third song.txt
+```
+
+- A lyrics file has the same name as the song file. `.lrc` (synced, the current line is
+  highlighted) is used before `.txt` (plain text), and a file next to the song before one in
+  the `Lyrics` folder. UTF-8, UTF-16 and older Windows-1252 text files all work.
+- `artist.jpg` may be in the album folder or the artist folder above it. When it's there, Unitn
+  uses it and doesn't download a photo.
 
 ## Making a release
 
@@ -161,11 +203,16 @@ preview, install the Slint VS Code extension or `slint-viewer` and open
 
 ## Where data is stored
 
-| OS      | Library database & covers                         | Settings                                 |
+| OS      | Library database, covers, artist photos           | Settings                                 |
 |---------|---------------------------------------------------|------------------------------------------|
 | Linux   | `~/.local/share/unitn/`                           | `~/.config/unitn/settings.json`          |
 | macOS   | `~/Library/Application Support/net.bokors.Unitn/` | same folder                              |
 | Windows | `%APPDATA%\bokors\Unitn\data\`                   | `%APPDATA%\bokors\Unitn\config\`        |
+
+Inside the data folder: `library.sqlite3` (the library), `covers/` (album art cache),
+`artists/` (downloaded artist photos, named after the artist, e.g. `Daft Punk.jpg`) and
+`thumbs/` (small copies of covers and artist photos for the grids; safe to delete).
+Your own `artist.jpg` files stay in your music folders and are not copied.
 
 On first start, your system Music folder is added automatically.
 

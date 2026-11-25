@@ -205,6 +205,57 @@ pub fn save_cover(data: &[u8], cover_dir: &Path, key: &str) -> Option<PathBuf> {
     Some(file)
 }
 
+/// Stores a downloaded artist photo in `dir` (the "artists" folder) as
+/// `<Artist name>.jpg` / `.png`, so people can find it. Returns its path.
+pub fn save_artist_photo(data: &[u8], dir: &Path, artist: &str) -> Option<PathBuf> {
+    let ext = if data.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "png"
+    } else if data.starts_with(&[0xFF, 0xD8]) {
+        "jpg"
+    } else {
+        return None;
+    };
+    fs::create_dir_all(dir).ok()?;
+    let file = dir.join(format!("{}.{ext}", artist_file_stem(artist)));
+    fs::write(&file, data).ok()?;
+    Some(file)
+}
+
+/// Moves an artist photo saved by an older version (a hashed name in the
+/// covers folder) into `dir` under the artist's name. Returns the new path,
+/// or `None` when it is already there or can't be moved.
+pub fn move_artist_photo(old: &Path, dir: &Path, artist: &str) -> Option<PathBuf> {
+    if old.parent() == Some(dir) {
+        return None;
+    }
+    let ext = old.extension()?.to_str()?;
+    fs::create_dir_all(dir).ok()?;
+    let new = dir.join(format!("{}.{ext}", artist_file_stem(artist)));
+    if fs::rename(old, &new).is_err() {
+        fs::copy(old, &new).ok()?;
+        let _ = fs::remove_file(old);
+    }
+    Some(new)
+}
+
+/// An artist name made safe as a file name on Windows, macOS and Linux.
+fn artist_file_stem(artist: &str) -> String {
+    let mut stem: String = artist
+        .chars()
+        .map(|c| if c.is_control() || r#"<>:"/\|?*"#.contains(c) { '_' } else { c })
+        .take(100)
+        .collect();
+    stem = stem.trim_end_matches(['.', ' ']).trim_start().to_string();
+    // Names Windows reserves for devices.
+    let upper = stem.to_ascii_uppercase();
+    let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&upper.as_str())
+        || ((upper.starts_with("COM") || upper.starts_with("LPT")) && upper.len() == 4 && upper.as_bytes()[3].is_ascii_digit());
+    if stem.is_empty() || reserved {
+        stem.insert(0, '_');
+    }
+    stem
+}
+
 /// A cover previously stored by [`save_cover`] under `key`, if any.
 pub fn cached_cover(cover_dir: &Path, key: &str) -> Option<PathBuf> {
     let mut h = DefaultHasher::new();
@@ -216,6 +267,32 @@ pub fn cached_cover(cover_dir: &Path, key: &str) -> Option<PathBuf> {
 fn folder_cover(track: &Path) -> Option<PathBuf> {
     let dir = track.parent()?;
     FOLDER_COVERS.iter().map(|n| dir.join(n)).find(|p| p.is_file())
+}
+
+/// Artist photo names people keep with their music (the Kodi / Jellyfin
+/// convention), compared without regard to case.
+const ARTIST_IMAGES: &[&str] = &["artist.jpg", "artist.jpeg", "artist.png", "artist.webp"];
+
+/// A photo of the artist stored with the music: `artist.jpg` (or `.jpeg`,
+/// `.png`, `.webp`) in the song's own folder or the folder above it, as in
+/// `Music/Artist/artist.jpg` next to `Music/Artist/Album/01 Song.flac`.
+pub fn local_artist_image(track: &Path) -> Option<PathBuf> {
+    let album_dir = track.parent()?;
+    let dirs = [Some(album_dir), album_dir.parent()];
+    dirs.into_iter().flatten().find_map(|dir| {
+        let mut found: Vec<(usize, PathBuf)> = fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                let rank = ARTIST_IMAGES.iter().position(|n| *n == name)?;
+                let path = e.path();
+                path.is_file().then_some((rank, path))
+            })
+            .collect();
+        found.sort();
+        found.into_iter().next().map(|(_, p)| p)
+    })
 }
 
 #[cfg(test)]
@@ -255,6 +332,50 @@ mod tests {
         let stats = scan(&lib, &folders, &root.join("covers"), |_| {}).unwrap();
         assert_eq!(stats.removed, 1);
         assert_eq!(lib.track_count().unwrap(), 0);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn finds_local_artist_images() {
+        let root = std::env::temp_dir().join(format!("unitn-artist-img-{}", std::process::id()));
+        let album = root.join("Artist/Album");
+        fs::create_dir_all(&album).unwrap();
+        let song = album.join("01 Song.flac");
+        fs::write(&song, b"x").unwrap();
+        assert_eq!(local_artist_image(&song), None);
+
+        // In the artist folder, any capitalisation.
+        fs::write(root.join("Artist/Artist.WEBP"), b"x").unwrap();
+        assert_eq!(local_artist_image(&song), Some(root.join("Artist/Artist.WEBP")));
+        // The song's own folder comes first, and .jpg before .png.
+        fs::write(album.join("artist.png"), b"x").unwrap();
+        fs::write(album.join("artist.jpg"), b"x").unwrap();
+        assert_eq!(local_artist_image(&song), Some(album.join("artist.jpg")));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn artist_photo_file_names() {
+        assert_eq!(artist_file_stem("Daft Punk"), "Daft Punk");
+        assert_eq!(artist_file_stem("AC/DC"), "AC_DC");
+        assert_eq!(artist_file_stem("Who? What: \"Why\"."), "Who_ What_ _Why_");
+        assert_eq!(artist_file_stem("Björk"), "Björk");
+        assert_eq!(artist_file_stem("con"), "_con");
+        assert_eq!(artist_file_stem("..."), "_");
+
+        let root = std::env::temp_dir().join(format!("unitn-artist-photo-{}", std::process::id()));
+        let (covers, artists) = (root.join("covers"), root.join("artists"));
+        fs::create_dir_all(&covers).unwrap();
+        let jpg = [0xFF, 0xD8, 1, 2, 3];
+        assert_eq!(save_artist_photo(&jpg, &artists, "AC/DC"), Some(artists.join("AC_DC.jpg")));
+        assert_eq!(save_artist_photo(b"not an image", &artists, "X"), None);
+
+        let old = covers.join("0123456789abcdef.png");
+        fs::write(&old, b"png").unwrap();
+        let moved = move_artist_photo(&old, &artists, "Air").unwrap();
+        assert_eq!(moved, artists.join("Air.png"));
+        assert!(moved.is_file() && !old.exists());
+        assert_eq!(move_artist_photo(&moved, &artists, "Air"), None);
         let _ = fs::remove_dir_all(&root);
     }
 

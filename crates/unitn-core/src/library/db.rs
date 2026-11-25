@@ -8,12 +8,15 @@ use rusqlite::{params, Connection, Row};
 use crate::model::{Album, Artist, Playlist, Station, Track};
 use crate::servers::ServerAlbum;
 
+pub mod stats;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS folders (path TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS tracks (
     id           INTEGER PRIMARY KEY,
     path         TEXT NOT NULL UNIQUE,
     mtime        INTEGER NOT NULL DEFAULT 0,
+    added        INTEGER NOT NULL DEFAULT 0,
     title        TEXT NOT NULL DEFAULT '',
     artist       TEXT NOT NULL DEFAULT '',
     album        TEXT NOT NULL DEFAULT '',
@@ -142,6 +145,18 @@ CREATE TABLE IF NOT EXISTS stations (
     bitrate INTEGER NOT NULL DEFAULT 0,
     added   INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS plays (
+    id           INTEGER PRIMARY KEY,
+    at           INTEGER NOT NULL,
+    listened_ms  INTEGER NOT NULL DEFAULT 0,
+    path         TEXT NOT NULL DEFAULT '',
+    title        TEXT NOT NULL DEFAULT '',
+    artist       TEXT NOT NULL DEFAULT '',
+    album        TEXT NOT NULL DEFAULT '',
+    album_artist TEXT NOT NULL DEFAULT '',
+    genre        TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_plays_at ON plays(at);
 ";
 
 /// The artist an album is grouped under: album artist, falling back to artist.
@@ -221,6 +236,7 @@ fn album_from_row(r: &Row) -> rusqlite::Result<Album> {
         track_count: r.get::<_, i64>(3)? as u32,
         cover: r.get::<_, Option<String>>(4)?.map(PathBuf::from),
         duration_ms: r.get::<_, Option<i64>>(5)?.unwrap_or(0).max(0) as u64,
+        added: r.get::<_, Option<i64>>(6)?.unwrap_or(0),
     })
 }
 
@@ -270,6 +286,14 @@ fn migrate(conn: &Connection) -> Result<()> {
     };
     if !has_column("podcasts", "favorite")? {
         conn.execute_batch("ALTER TABLE podcasts ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")?;
+    }
+    // When a song was added to the library ("Recently added" sorting). Songs
+    // from before 0.6.5 use their file's modification time instead.
+    if !has_column("tracks", "added")? {
+        conn.execute_batch(
+            "ALTER TABLE tracks ADD COLUMN added INTEGER NOT NULL DEFAULT 0;
+             UPDATE tracks SET added = mtime WHERE added = 0;",
+        )?;
     }
     Ok(())
 }
@@ -372,8 +396,8 @@ impl Library {
             None => t,
         };
         self.conn.execute(
-            "INSERT INTO tracks (path, mtime, title, artist, album, album_artist, track_no, disc_no, year, genre, duration_ms, cover)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "INSERT INTO tracks (path, mtime, title, artist, album, album_artist, track_no, disc_no, year, genre, duration_ms, cover, added)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CAST(strftime('%s', 'now') AS INTEGER))
              ON CONFLICT(path) DO UPDATE SET
                 mtime = excluded.mtime, title = excluded.title, artist = excluded.artist,
                 album = excluded.album, album_artist = excluded.album_artist,
@@ -400,6 +424,13 @@ impl Library {
     pub fn delete_track(&self, path: &Path) -> Result<()> {
         self.conn.execute("DELETE FROM tracks WHERE path = ?1", params![path_str(path)])?;
         Ok(())
+    }
+
+    /// When each song was added to the library (Unix seconds), by song id.
+    pub fn added_times(&self) -> Result<HashMap<i64, i64>> {
+        let mut st = self.conn.prepare("SELECT id, added FROM tracks")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<HashMap<_, _>>>()?;
+        Ok(rows)
     }
 
     pub fn track_count(&self) -> Result<u64> {
@@ -444,7 +475,7 @@ impl Library {
     pub fn albums_matching(&self, artist: Option<&str>, query: Option<&str>) -> Result<Vec<Album>> {
         let q = query.map(str::trim).filter(|q| !q.is_empty()).map(like_pattern);
         let sql = format!(
-            "SELECT {GROUP_ARTIST} AS ga, album, MAX(year), COUNT(*), MAX(cover), SUM(duration_ms)
+            "SELECT {GROUP_ARTIST} AS ga, album, MAX(year), COUNT(*), MAX(cover), SUM(duration_ms), MAX(added)
              FROM tracks
              WHERE (?1 IS NULL OR {GROUP_ARTIST} = ?1)
                AND (?2 IS NULL OR album LIKE ?2 ESCAPE '\\' OR artist LIKE ?2 ESCAPE '\\'
@@ -622,8 +653,8 @@ impl Library {
 
     pub fn artists(&self) -> Result<Vec<Artist>> {
         let sql = format!(
-            "SELECT {GROUP_ARTIST} AS ga, COUNT(DISTINCT album), COUNT(*) FROM tracks
-             GROUP BY ga ORDER BY ga COLLATE NOCASE"
+            "SELECT {GROUP_ARTIST} AS ga, COUNT(DISTINCT album), COUNT(*), MAX(added), MAX(cover), MIN(path)
+             FROM tracks GROUP BY ga ORDER BY ga COLLATE NOCASE"
         );
         let mut st = self.conn.prepare(&sql)?;
         let rows = st
@@ -632,6 +663,9 @@ impl Library {
                     name: r.get(0)?,
                     album_count: r.get::<_, i64>(1)? as u32,
                     track_count: r.get::<_, i64>(2)? as u32,
+                    added: r.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                    cover: r.get::<_, Option<String>>(4)?.map(PathBuf::from),
+                    sample: r.get::<_, Option<String>>(5)?.map(PathBuf::from),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

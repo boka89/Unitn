@@ -39,10 +39,13 @@ impl Media {
         Self { enabled: true, ..Self::disabled() }
     }
 
-    pub fn set_metadata(&mut self, title: &str, artist: &str, album: &str, duration: Option<f64>) {
+    /// `cover`: the album art as a local image file, shown in the
+    /// notification and on the lock screen.
+    pub fn set_metadata(&mut self, title: &str, artist: &str, album: &str, cover: Option<&std::path::Path>, duration: Option<f64>) {
         self.now.title = title.to_string();
         self.now.artist = artist.to_string();
         self.now.album = album.to_string();
+        self.now.cover = cover.filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned());
         self.now.duration = duration.filter(|d| d.is_finite() && *d > 0.0);
         self.push();
     }

@@ -1,4 +1,5 @@
-//! Song lyrics: from a `.lrc` file next to the song, from the song's own
+//! Song lyrics: from a `.lrc` / `.txt` file next to the song or in the album's
+//! `Lyrics` subfolder, from the song's own
 //! tags, or online from LRCLIB (lrclib.net, free and open). Synced (LRC)
 //! lyrics carry a time per line, so the current line can be highlighted.
 
@@ -122,12 +123,15 @@ fn parse_stamp(tag: &str) -> Option<f64> {
     (secs < 60.0 && secs >= 0.0).then_some(min as f64 * 60.0 + secs)
 }
 
-/// Lyrics stored with a local song: `Song.lrc` next to `Song.mp3`, or a
-/// lyrics tag inside the file.
+/// Lyrics stored with a local song: a lyrics file named like the song
+/// (`Song.lrc` or `Song.txt`), next to it or in a `Lyrics` subfolder of the
+/// album folder (any capitalisation), or a lyrics tag inside the file.
+/// `.lrc` files win over `.txt`, and a file next to the song over one in
+/// the subfolder.
 pub fn local(path: &Path) -> Option<Lyrics> {
-    let lrc = path.with_extension("lrc");
-    if let Ok(text) = std::fs::read_to_string(&lrc) {
-        if let Some(l) = parse(&text, "Lyrics file") {
+    for file in lyrics_files(path) {
+        let Ok(bytes) = std::fs::read(&file) else { continue };
+        if let Some(l) = parse(&decode_text(&bytes), "Lyrics file") {
             return Some(l);
         }
     }
@@ -136,6 +140,107 @@ pub fn local(path: &Path) -> Option<Lyrics> {
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
     let text = tag.get_string(&lofty::tag::ItemKey::Lyrics)?;
     parse(text, "Song tags")
+}
+
+/// Lyrics files that may belong to the song at `path`, best first.
+fn lyrics_files(path: &Path) -> Vec<std::path::PathBuf> {
+    let (Some(dir), Some(stem)) = (path.parent(), path.file_stem()) else { return Vec::new() };
+    let mut dirs = vec![dir.to_path_buf()];
+    // A "Lyrics" / "lyrics" subfolder; matched without regard to case, so it
+    // also works on Linux, where file names are case-sensitive.
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        let mut subs: Vec<_> = entries
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("lyrics"))
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        subs.sort();
+        dirs.extend(subs);
+    }
+    let mut files = Vec::new();
+    for ext in ["lrc", "txt"] {
+        for d in &dirs {
+            let wanted = format!("{}.{ext}", stem.to_string_lossy());
+            let exact = d.join(&wanted);
+            if exact.is_file() {
+                files.push(exact);
+                continue;
+            }
+            // Same name with another capitalisation (Song.LRC, song.lrc).
+            if let Ok(entries) = std::fs::read_dir(d) {
+                if let Some(e) = entries.flatten().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(&wanted)) {
+                    files.push(e.path());
+                }
+            }
+        }
+    }
+    files
+}
+
+/// Text of a lyrics file: UTF-8 (with or without a byte-order mark), UTF-16
+/// with a byte-order mark (Windows Notepad's "Unicode"), or else Windows-1252
+/// / Latin-1, which older lyrics files often use.
+fn decode_text(bytes: &[u8]) -> String {
+    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        return String::from_utf8_lossy(rest).into_owned();
+    }
+    let utf16 = |rest: &[u8], le: bool| {
+        let units: Vec<u16> = rest
+            .chunks_exact(2)
+            .map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) })
+            .collect();
+        String::from_utf16_lossy(&units)
+    };
+    if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        return utf16(rest, true);
+    }
+    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        return utf16(rest, false);
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => bytes.iter().map(|&b| cp1252(b)).collect(),
+    }
+}
+
+/// One Windows-1252 byte as a character (Latin-1, plus curly quotes, dashes,
+/// € and friends in 0x80–0x9F).
+fn cp1252(b: u8) -> char {
+    const HIGH: [char; 32] = [
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž', '\u{8f}',
+        '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}', 'ž', 'Ÿ',
+    ];
+    match b {
+        0x80..=0x9F => HIGH[(b - 0x80) as usize],
+        _ => b as char,
+    }
+}
+
+/// Saves lyrics next to the song, named like it: `Song.lrc` for synced
+/// lyrics, `Song.txt` for plain ones. Returns the file written.
+pub fn save_sidecar(song: &Path, lyrics: &Lyrics) -> anyhow::Result<std::path::PathBuf> {
+    let ext = if lyrics.synced { "lrc" } else { "txt" };
+    let file = song.with_extension(ext);
+    std::fs::write(&file, lyrics.to_text())?;
+    Ok(file)
+}
+
+/// Writes lyrics into the song file's own tags (synced lyrics as LRC text,
+/// as most players expect), creating a tag if the file has none.
+pub fn save_to_tags(song: &Path, lyrics: &Lyrics) -> anyhow::Result<()> {
+    use lofty::config::WriteOptions;
+    use lofty::prelude::*;
+    use lofty::tag::Tag;
+    let mut tagged = lofty::read_from_path(song)?;
+    if tagged.primary_tag().is_none() {
+        let kind = tagged.primary_tag_type();
+        tagged.insert_tag(Tag::new(kind));
+    }
+    let tag = tagged.primary_tag_mut().ok_or_else(|| anyhow::anyhow!("this file type can't hold tags"))?;
+    tag.insert_text(ItemKey::Lyrics, lyrics.to_text());
+    tag.save_to_path(song, WriteOptions::default())?;
+    Ok(())
 }
 
 fn agent() -> ureq::Agent {
@@ -263,5 +368,57 @@ mod tests {
         assert_eq!(l.source, "Lyrics file");
         assert_eq!(l.lines[0].time, Some(10.0));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reads_lyrics_from_a_lyrics_subfolder() {
+        let dir = std::env::temp_dir().join(format!("unitn-lyrics-sub-{}", std::process::id()));
+        let sub = dir.join("Lyrics");
+        std::fs::create_dir_all(&sub).unwrap();
+        let (a, b, c) = (dir.join("01 One.flac"), dir.join("02 Two.flac"), dir.join("03 Three.flac"));
+        for song in [&a, &b, &c] {
+            std::fs::write(song, b"not really audio").unwrap();
+        }
+        std::fs::write(sub.join("01 One.lrc"), "[00:01.00]one").unwrap();
+        // Plain text in Windows-1252 ("café"), and a capitalised extension.
+        std::fs::write(sub.join("02 Two.TXT"), b"caf\xe9\nsecond line").unwrap();
+        // A .lrc next to the song wins over the subfolder.
+        std::fs::write(sub.join("03 Three.lrc"), "[00:01.00]from subfolder").unwrap();
+        std::fs::write(dir.join("03 Three.lrc"), "[00:01.00]next to song").unwrap();
+
+        let one = local(&a).unwrap();
+        assert!(one.synced);
+        assert_eq!(one.lines[0].text, "one");
+        let two = local(&b).unwrap();
+        assert!(!two.synced);
+        assert_eq!(two.lines[0].text, "café");
+        assert_eq!(local(&c).unwrap().lines[0].text, "next to song");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn saves_lyrics_next_to_the_song() {
+        let dir = std::env::temp_dir().join(format!("unitn-lyrics-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let song = dir.join("01 Song.flac");
+        std::fs::write(&song, b"not really audio").unwrap();
+        let synced = parse("[00:01.50]one\n[00:03.00]two", "LRCLIB").unwrap();
+        assert_eq!(save_sidecar(&song, &synced).unwrap(), dir.join("01 Song.lrc"));
+        // It is found again, as the same lyrics.
+        let again = local(&song).unwrap();
+        assert!(again.synced);
+        assert_eq!(again.lines, synced.lines);
+        let plain = parse("just words", "LRCLIB").unwrap();
+        assert_eq!(save_sidecar(&song, &plain).unwrap(), dir.join("01 Song.txt"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn decodes_lyrics_text() {
+        assert_eq!(decode_text(b"\xEF\xBB\xBFhi"), "hi");
+        assert_eq!(decode_text(&[0xFF, 0xFE, b'h', 0, b'i', 0]), "hi");
+        assert_eq!(decode_text("héllo".as_bytes()), "héllo");
+        assert_eq!(decode_text(b"h\xe9llo"), "héllo");
+        assert_eq!(decode_text(b"\x93hi\x94 \x96 ok"), "“hi” – ok");
     }
 }

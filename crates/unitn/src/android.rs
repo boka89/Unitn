@@ -22,6 +22,8 @@ pub struct NowPlaying {
     pub title: String,
     pub artist: String,
     pub album: String,
+    /// The album cover as an image file, if there is one.
+    pub cover: Option<String>,
     /// Seconds; `None` for live radio.
     pub duration: Option<f64>,
     /// Seconds.

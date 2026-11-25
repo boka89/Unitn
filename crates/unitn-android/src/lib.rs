@@ -91,16 +91,18 @@ impl Platform for Java {
             let title = env.new_string(&now.title)?;
             let artist = env.new_string(&now.artist)?;
             let album = env.new_string(&now.album)?;
+            let cover = env.new_string(now.cover.as_deref().unwrap_or(""))?;
             let position = (now.position * 1000.0) as i64;
             let duration = now.duration.map_or(-1, |d| (d * 1000.0) as i64);
             env.call_method(
                 activity,
                 "updatePlayback",
-                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZ)V",
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZ)V",
                 &[
                     JValue::Object(&title),
                     JValue::Object(&artist),
                     JValue::Object(&album),
+                    JValue::Object(&cover),
                     JValue::Long(position),
                     JValue::Long(duration),
                     JValue::Bool(now.playing as u8),

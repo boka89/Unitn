@@ -110,14 +110,14 @@ public class MainActivity extends NativeActivity {
     }
 
     /** Shows or updates the playback notification; starts the service that keeps the music playing. */
-    public void updatePlayback(final String title, final String artist, final String album,
+    public void updatePlayback(final String title, final String artist, final String album, final String cover,
             final long positionMs, final long durationMs, final boolean playing) {
         main.post(new Runnable() {
             @Override
             public void run() {
                 PlaybackService service = PlaybackService.instance;
                 if (service != null) {
-                    service.update(title, artist, album, positionMs, durationMs, playing);
+                    service.update(title, artist, album, cover, positionMs, durationMs, playing);
                     return;
                 }
                 Intent intent = new Intent(MainActivity.this, PlaybackService.class)
@@ -125,6 +125,7 @@ public class MainActivity extends NativeActivity {
                         .putExtra("title", title)
                         .putExtra("artist", artist)
                         .putExtra("album", album)
+                        .putExtra("cover", cover)
                         .putExtra("position", positionMs)
                         .putExtra("duration", durationMs)
                         .putExtra("playing", playing);

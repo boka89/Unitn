@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 /// A local audio file with its tags.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Track {
     pub id: i64,
     pub path: PathBuf,
@@ -60,6 +61,8 @@ pub struct Album {
     pub track_count: u32,
     pub duration_ms: u64,
     pub cover: Option<PathBuf>,
+    /// When the album's newest song was added to the library (Unix seconds).
+    pub added: i64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -67,6 +70,12 @@ pub struct Artist {
     pub name: String,
     pub album_count: u32,
     pub track_count: u32,
+    /// When the artist's newest song was added to the library (Unix seconds).
+    pub added: i64,
+    /// One of the artist's album covers, for when there is no artist photo.
+    pub cover: Option<PathBuf>,
+    /// One of the artist's songs, to look for an `artist.jpg` next to it.
+    pub sample: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -124,5 +133,41 @@ impl Station {
             parts.push(fmt);
         }
         parts.join(" • ")
+    }
+}
+
+/// The genre of an album, from its songs' genre tags: the most common one,
+/// or the two most common joined with " / " when the album mixes genres.
+/// Tags holding several genres ("Rock; Pop", "Rock\0Pop") count each one.
+pub fn album_genre(tracks: &[Track]) -> String {
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for t in tracks {
+        for g in t.genre.split([';', '\0']).map(str::trim).filter(|g| !g.is_empty()) {
+            match counts.iter_mut().find(|(name, _)| name.eq_ignore_ascii_case(g)) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((g.to_string(), 1)),
+            }
+        }
+    }
+    // Stable sort: ties keep the order of first appearance.
+    counts.sort_by(|a, b| b.1.cmp(&a.1));
+    counts.into_iter().take(2).map(|(g, _)| g).collect::<Vec<_>>().join(" / ")
+}
+
+#[cfg(test)]
+mod album_genre_tests {
+    use super::*;
+
+    fn song(genre: &str) -> Track {
+        Track { genre: genre.to_string(), ..Default::default() }
+    }
+
+    #[test]
+    fn picks_the_albums_genres() {
+        assert_eq!(album_genre(&[]), "");
+        assert_eq!(album_genre(&[song(""), song("")]), "");
+        assert_eq!(album_genre(&[song("Rock"), song("rock"), song("")]), "Rock");
+        assert_eq!(album_genre(&[song("Jazz"), song("Soul"), song("Soul"), song("Funk")]), "Soul / Jazz");
+        assert_eq!(album_genre(&[song("Rock; Pop"), song("Pop")]), "Pop / Rock");
     }
 }

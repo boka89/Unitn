@@ -1,6 +1,11 @@
 // Colors and sizes for the dark and light themes.
 
 export global Theme {
+    /// Room kept free at the right of list rows for the vertical scrollbar,
+    /// which is drawn on top of the list (it widens on hover), so it never
+    /// covers a row's highlight or its last column.
+    /// (Phones and tablets draw a thin bar that needs no lane.)
+    out property <length> scroll-gutter: mobile ? 0px : 16px;
     // 0 = follow system, 1 = light, 2 = dark
     in-out property <int> mode: 0;
     in-out property <bool> system-dark: true;

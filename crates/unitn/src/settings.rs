@@ -11,6 +11,13 @@ pub struct Paths {
     pub log: PathBuf,
     pub database: PathBuf,
     pub covers: PathBuf,
+    /// Downloaded artist photos, named after the artist.
+    pub artists: PathBuf,
+    /// Small copies (320px JPEG) of album covers and artist photos, for the
+    /// Albums and Artists grids.
+    pub thumbs: PathBuf,
+    /// The queue, current song and position, kept for the next start.
+    pub session: PathBuf,
     pub settings: PathBuf,
 }
 
@@ -36,6 +43,9 @@ impl Paths {
             log: data.join("unitn.log"),
             database: data.join("library.sqlite3"),
             covers: data.join("covers"),
+            artists: data.join("artists"),
+            thumbs: data.join("thumbs"),
+            session: data.join("session.json"),
             settings: config.join("settings.json"),
         })
     }
@@ -105,11 +115,38 @@ pub struct Settings {
     pub window_width: Option<f32>,
     pub window_height: Option<f32>,
     pub window_maximized: bool,
+    /// Window position on the screen (physical pixels, including the frame).
+    pub window_x: Option<i32>,
+    pub window_y: Option<i32>,
+    /// The app was closed as the mini player: it starts as one again.
+    pub mini_player: bool,
+    /// The mini player's position (physical pixels) and width (logical).
+    pub mini_x: Option<i32>,
+    pub mini_y: Option<i32>,
+    pub mini_width: Option<f32>,
+    /// The mini player shows the line of lyrics being sung.
+    pub mini_lyrics: bool,
+    /// Sort order of the Albums / Artists / Songs pages (an index into
+    /// `unitn_core::sort::*_ORDERS`) and whether its direction is flipped.
+    pub album_sort: usize,
+    pub album_sort_reversed: bool,
+    pub artist_sort: usize,
+    pub artist_sort_reversed: bool,
+    pub song_sort: usize,
+    pub song_sort_reversed: bool,
+    /// Sorting skips a leading "The", "A" or "An" (The Beatles under B).
+    pub sort_ignore_articles: bool,
+    /// On start, the last song is back on the player (paused where it was),
+    /// with the queue.
+    pub resume_session: bool,
+    /// Save lyrics found online with the song: 0 no, 1 as a file next to it,
+    /// 2 in the song's tags, 3 both.
+    pub lyrics_autosave: u8,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { theme: THEME_SYSTEM, volume: 0.8, shuffle: false, repeat: 0, opacity: 1.0, viz_style: 0, download_art: true, compact_lists: false, eq_enabled: false, eq_gains: [0.0; 10], eq_preset: 0, eq_preamp: 0.0, eq_open: false, glass: false, servers: Vec::new(), crossfade: 0, gapless_albums: false, lyrics_online: true, lyrics_open: false, startup_sound: true, window_width: None, window_height: None, window_maximized: false }
+        Self { theme: THEME_SYSTEM, volume: 0.8, shuffle: false, repeat: 0, opacity: 1.0, viz_style: 0, download_art: true, compact_lists: false, eq_enabled: false, eq_gains: [0.0; 10], eq_preset: 0, eq_preamp: 0.0, eq_open: false, glass: false, servers: Vec::new(), crossfade: 0, gapless_albums: false, lyrics_online: true, lyrics_open: false, startup_sound: true, window_width: None, window_height: None, window_maximized: false, window_x: None, window_y: None, mini_player: false, mini_x: None, mini_y: None, mini_width: None, mini_lyrics: false, album_sort: 0, album_sort_reversed: false, artist_sort: 0, artist_sort_reversed: false, song_sort: 0, song_sort_reversed: false, sort_ignore_articles: true, resume_session: true, lyrics_autosave: 0 }
     }
 }
 

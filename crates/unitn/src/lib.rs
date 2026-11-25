@@ -3,8 +3,15 @@
 //! (`crates/unitn-android`) both start it from here.
 
 mod app;
+mod app_id;
 mod dialogs;
 mod glass;
+// The startup animation: its own splash window on the desktop, inside the
+// (only) window on Android.
+#[cfg(not(target_os = "android"))]
+mod intro;
+#[cfg(target_os = "android")]
+#[path = "intro_android.rs"]
 mod intro;
 // OS media keys / "Now Playing": souvlaki on the desktop, nothing yet on Android.
 #[cfg(not(target_os = "android"))]
@@ -83,6 +90,10 @@ fn run(paths: settings::Paths) -> Result<()> {
     let library = Library::open(&paths.database)?;
 
     configure_window_style()?;
+    // Windows: the app's identity (name and icon in the media overlay), before any window exists.
+    if let Some(data_dir) = paths.database.parent() {
+        app_id::register(data_dir);
+    }
     unitn_core::log::log("startup: creating window");
     let ui = AppWindow::new()?;
     if cfg!(target_os = "macos") {
@@ -91,29 +102,55 @@ fn run(paths: settings::Paths) -> Result<()> {
     }
     let (player, player_events) = Player::new();
 
-    // The window opens at the size it had when the app was closed.
-    if let (Some(w), Some(h)) = (settings.window_width, settings.window_height) {
-        let (w, h) = (w.max(MIN_WINDOW.0 as f32), h.max(MIN_WINDOW.1 as f32));
-        if w.is_finite() && h.is_finite() && w < 10_000.0 && h < 10_000.0 {
-            ui.window().set_size(slint::LogicalSize::new(w, h));
-        }
-    }
-    let start_maximized = settings.window_maximized;
-
-    // Startup animation (test hook: UNITN_NO_INTRO=1 skips it).
     let intro_enabled = std::env::var("UNITN_NO_INTRO").map_or(true, |v| v.is_empty());
-    if intro_enabled {
-        let sound = settings.startup_sound.then_some(settings.volume);
-        let intro = intro::start(&ui, sound);
-        ui.on_intro_skip(move || intro.skip());
+    let intro_sound = settings.startup_sound.then_some(settings.volume);
+    let (main_shown_tx, main_shown_rx) = mpsc::channel::<()>();
+
+    // Desktop: the window opens at the size and place it had when the app
+    // was closed (as the mini player if it was one), after the startup
+    // animation in its own splash window (test hook: UNITN_NO_INTRO=1 skips
+    // it).
+    #[cfg(not(target_os = "android"))]
+    let _splash = {
+        let start_maximized = restore_window(&ui, &settings);
+        let show_main = {
+            let weak = ui.as_weak();
+            move || {
+                let Some(ui) = weak.upgrade() else { return };
+                if let Err(e) = ui.show() {
+                    unitn_core::log::log(format!("startup: cannot show the window: {e}"));
+                }
+                keep_on_screen(&ui);
+                if start_maximized {
+                    ui.window().set_maximized(true);
+                }
+                unitn_core::log::log("startup: window shown");
+                let _ = main_shown_tx.send(());
+            }
+        };
+        if intro_enabled {
+            let splash = SplashWindow::new()?;
+            let _intro = intro::start(&splash, intro_sound, show_main);
+            Some(splash)
+        } else {
+            show_main();
+            None
+        }
+    };
+
+    // Android: one window that fills the screen; the startup animation plays
+    // inside it.
+    #[cfg(target_os = "android")]
+    {
+        if intro_enabled {
+            let intro = intro::start(&ui, intro_sound);
+            ui.on_intro_skip(move || intro.skip());
+        }
+        ui.show()?;
+        unitn_core::log::log("startup: window shown");
+        let _ = main_shown_tx.send(());
     }
 
-    // The window must exist before media controls can attach to it (Windows).
-    ui.show()?;
-    if start_maximized {
-        ui.window().set_maximized(true);
-    }
-    unitn_core::log::log("startup: window shown");
     let (media_tx, media_rx) = mpsc::channel();
     // Media controls are attached once the event loop runs (on Windows the
     // native window, which they need, only exists from then on).
@@ -130,7 +167,12 @@ fn run(paths: settings::Paths) -> Result<()> {
         media_rx,
     )));
     app::connect(&ui, &app);
-    app.borrow_mut().start();
+    // Load the library once the event loop runs, so the window (or the
+    // startup animation) shows right away.
+    {
+        let app = app.clone();
+        Timer::single_shot(Duration::ZERO, move || app.borrow_mut().start());
+    }
 
     // Test hook: UNITN_AUTOPLAY="<file or URL>|<file or URL>|…" plays each
     // target for a few seconds in turn.
@@ -149,11 +191,18 @@ fn run(paths: settings::Paths) -> Result<()> {
 
     watch_window_events(&ui, &app);
 
+    // Media controls attach to the native window, so only once it is shown
+    // (after the startup animation).
     let media_timer = Timer::default();
     {
         let app = app.clone();
         let weak = ui.as_weak();
-        media_timer.start(TimerMode::SingleShot, Duration::from_millis(400), move || {
+        let mut attached = false;
+        media_timer.start(TimerMode::Repeated, Duration::from_millis(400), move || {
+            if attached || main_shown_rx.try_recv().is_err() {
+                return;
+            }
+            attached = true;
             let Some(ui) = weak.upgrade() else { return };
             let media = media::Media::new(window_handle(&ui), media_tx.clone());
             if let Ok(mut app) = app.try_borrow_mut() {
@@ -209,6 +258,8 @@ fn run(paths: settings::Paths) -> Result<()> {
 
     unitn_core::log::log("startup: ready");
     slint::run_event_loop()?;
+    app.borrow_mut().finish_listen();
+    app.borrow().save_session();
     ui.hide()?;
     app.borrow().save_settings();
     Ok(())
@@ -226,6 +277,7 @@ fn watch_window_events(ui: &AppWindow, app: &Rc<RefCell<app::App>>) {
     let timer = Rc::new(Timer::default());
     let resize_weak = ui.as_weak();
     let resize_app = app.clone();
+    let resize_save = Rc::new(Timer::default());
     ui.window().on_winit_window_event(move |_, event| {
         match event {
             WindowEvent::Resized(_) => {
@@ -233,6 +285,7 @@ fn watch_window_events(ui: &AppWindow, app: &Rc<RefCell<app::App>>) {
                 // smaller than the size the player still works at.
                 let weak = resize_weak.clone();
                 let app = resize_app.clone();
+                let save_timer = resize_save.clone();
                 Timer::single_shot(Duration::ZERO, move || {
                     if let Some(ui) = weak.upgrade() {
                         keep_min_size(&ui);
@@ -242,10 +295,45 @@ fn watch_window_events(ui: &AppWindow, app: &Rc<RefCell<app::App>>) {
                         if !window.is_fullscreen() && !window.is_minimized() {
                             let size = window.size().to_logical(window.scale_factor());
                             if let Ok(mut app) = app.try_borrow_mut() {
-                                app.remember_window(size.width, size.height, window.is_maximized());
+                                if ui.get_mini_player() {
+                                    app.remember_mini_width(size.width);
+                                } else {
+                                    app.remember_window(size.width, size.height, window.is_maximized());
+                                }
                             }
+                            // Save shortly after resizing stops: quitting
+                            // with Cmd+Q on macOS skips the save at exit.
+                            let app = app.clone();
+                            save_timer.start(TimerMode::SingleShot, Duration::from_millis(800), move || {
+                                if let Ok(app) = app.try_borrow() {
+                                    app.save_settings();
+                                }
+                            });
                         }
                     }
+                });
+            }
+            WindowEvent::Moved(_) => {
+                // Remember where the window (or the mini player) is.
+                let weak = resize_weak.clone();
+                let app = resize_app.clone();
+                let save_timer = resize_save.clone();
+                Timer::single_shot(Duration::ZERO, move || {
+                    let Some(ui) = weak.upgrade() else { return };
+                    let window = ui.window();
+                    if window.is_fullscreen() || window.is_minimized() || window.is_maximized() {
+                        return;
+                    }
+                    let pos = window.position();
+                    if let Ok(mut app) = app.try_borrow_mut() {
+                        app.remember_position(ui.get_mini_player(), pos.x, pos.y);
+                    }
+                    let app = app.clone();
+                    save_timer.start(TimerMode::SingleShot, Duration::from_millis(800), move || {
+                        if let Ok(app) = app.try_borrow() {
+                            app.save_settings();
+                        }
+                    });
                 });
             }
             WindowEvent::HoveredFile(_) => {
@@ -287,22 +375,108 @@ fn watch_window_events(_ui: &AppWindow, _app: &Rc<RefCell<app::App>>) {}
 /// platform picked up the Slint value.
 const MIN_WINDOW: (f64, f64) = (960.0, 620.0);
 
-#[cfg(target_os = "android")]
-fn keep_min_size(_ui: &AppWindow) {}
+/// Mini player window: its height (plus the macOS title bar), and the
+/// narrowest and widest it may be made.
+pub(crate) const MINI_HEIGHT: f64 = 132.0;
+pub(crate) const MINI_WIDTH: (f64, f64) = (340.0, 720.0);
+pub(crate) const MINI_DEFAULT_WIDTH: f32 = 380.0;
+/// Extra height of the mini player's lyrics row.
+pub(crate) const MINI_LYRICS_HEIGHT: f64 = 34.0;
 
+/// Height of the mini player window (logical pixels).
+pub(crate) fn mini_height(ui: &AppWindow) -> f64 {
+    MINI_HEIGHT + if ui.get_mini_lyrics() { MINI_LYRICS_HEIGHT } else { 0.0 } + ui.get_titlebar_inset() as f64
+}
+
+/// Puts the window where it was when the app was closed, at that size; as
+/// the mini player if it was one. Returns whether to maximize it once shown.
 #[cfg(not(target_os = "android"))]
-fn keep_min_size(ui: &AppWindow) {
-    use slint::winit_030::winit::dpi::LogicalSize;
+fn restore_window(ui: &AppWindow, settings: &settings::Settings) -> bool {
+    let start_mini = settings.mini_player;
+    ui.set_mini_lyrics(settings.mini_lyrics);
+    let position = if start_mini {
+        ui.set_mini_player(true);
+        let width = settings.mini_width.filter(|w| w.is_finite()).unwrap_or(MINI_DEFAULT_WIDTH);
+        let width = width.clamp(MINI_WIDTH.0 as f32, MINI_WIDTH.1 as f32);
+        ui.window().set_size(slint::LogicalSize::new(width, mini_height(ui) as f32));
+        settings.mini_x.zip(settings.mini_y)
+    } else {
+        if let (Some(w), Some(h)) = (settings.window_width, settings.window_height) {
+            let (w, h) = (w.max(MIN_WINDOW.0 as f32), h.max(MIN_WINDOW.1 as f32));
+            if w.is_finite() && h.is_finite() && w < 10_000.0 && h < 10_000.0 {
+                ui.window().set_size(slint::LogicalSize::new(w, h));
+            }
+        }
+        settings.window_x.zip(settings.window_y)
+    };
+    if let Some((x, y)) = position {
+        ui.window().set_position(slint::PhysicalPosition::new(x, y));
+    }
+    settings.window_maximized && !start_mini
+}
+
+/// Android: the window always fills the screen.
+#[cfg(target_os = "android")]
+pub(crate) fn keep_on_screen(_ui: &AppWindow) {}
+
+/// Moves the window back onto a screen if its saved position is on none of
+/// them (e.g. a monitor that was unplugged). Not possible on Wayland, where
+/// apps can't see or set window positions.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn keep_on_screen(ui: &AppWindow) {
+    use slint::winit_030::winit::dpi::PhysicalPosition;
     use slint::winit_030::WinitWindowAccessor;
     ui.window().with_winit_window(|w| {
-        w.set_min_inner_size(Some(LogicalSize::new(MIN_WINDOW.0, MIN_WINDOW.1)));
+        let Ok(pos) = w.outer_position() else { return };
+        let size = w.outer_size();
+        let mut monitors = w.available_monitors().peekable();
+        if monitors.peek().is_none() {
+            return;
+        }
+        // At least the top 40 px and 100 px across must be on some monitor,
+        // so the window can still be grabbed and moved.
+        let visible = monitors.any(|m| {
+            let (mp, ms) = (m.position(), m.size());
+            pos.x + 100 <= mp.x + ms.width as i32
+                && pos.x + size.width as i32 - 100 >= mp.x
+                && pos.y + 40 <= mp.y + ms.height as i32
+                && pos.y >= mp.y - 20
+        });
+        if !visible {
+            if let Some(m) = w.primary_monitor().or_else(|| w.available_monitors().next()) {
+                let mp = m.position();
+                unitn_core::log::log(format!("window: saved position {},{} is off-screen, moving it back", pos.x, pos.y));
+                w.set_outer_position(PhysicalPosition::new(mp.x + 80, mp.y + 80));
+            }
+        }
+    });
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn keep_min_size(_ui: &AppWindow) {}
+
+#[cfg(not(target_os = "android"))]
+pub(crate) fn keep_min_size(ui: &AppWindow) {
+    use slint::winit_030::winit::dpi::LogicalSize;
+    use slint::winit_030::WinitWindowAccessor;
+    // The mini player has a fixed height and a narrow width range.
+    let mini = ui.get_mini_player();
+    let mini_h = mini_height(ui);
+    let (min, max) = if mini {
+        ((MINI_WIDTH.0, mini_h), Some(LogicalSize::new(MINI_WIDTH.1, mini_h)))
+    } else {
+        (MIN_WINDOW, None)
+    };
+    ui.window().with_winit_window(|w| {
+        w.set_min_inner_size(Some(LogicalSize::new(min.0, min.1)));
+        w.set_max_inner_size(max);
         if w.fullscreen().is_some() {
             return;
         }
         let size = w.inner_size().to_logical::<f64>(w.scale_factor());
-        if size.width < MIN_WINDOW.0 - 1.0 || size.height < MIN_WINDOW.1 - 1.0 {
+        if size.width < min.0 - 1.0 || size.height < min.1 - 1.0 {
             unitn_core::log::log(format!("window: {:.0}×{:.0} is below the minimum, enlarging", size.width, size.height));
-            let _ = w.request_inner_size(LogicalSize::new(size.width.max(MIN_WINDOW.0), size.height.max(MIN_WINDOW.1)));
+            let _ = w.request_inner_size(LogicalSize::new(size.width.max(min.0), size.height.max(min.1)));
         }
     });
 }

@@ -6,7 +6,8 @@ import { Theme } from "theme.slint";
 import {
     ServerItem, PodcastItem, EpisodeItem,
     AlbumItem, TrackItem, ArtistItem, StationItem, QueueEntry, PlaylistItem, TextField,
-    IconButton, PillButton, Chip, Artwork, Spectrum, SeekBar, Visualizer, EqPanel, VizControls, IdleArea,
+    IconButton, PillButton, Chip, Artwork, DragSource, Spectrum, SeekBar, Visualizer, EqPanel, VizControls, IdleArea,
+    SearchBox,
 } from "widgets.slint";
 
 component EmptyState inherits VerticalLayout {
@@ -58,7 +59,9 @@ component EmptyState inherits VerticalLayout {
 component AlbumCard inherits Rectangle {
     in property <AlbumItem> item;
     in property <bool> playing;
-    /// Side of the cover; the card is sized around it.
+    /// What a drag of the card carries (see Dnd.payload); "" = not draggable.
+    in property <string> drag-what;
+    /// Size of the cover; the grid makes it bigger to fill its rows.
     in property <length> art: 160px;
     callback clicked;
 
@@ -134,9 +137,14 @@ component AlbumCard inherits Rectangle {
         }
     }
 
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+    DragSource {
+        enabled: root.drag-what != "";
+        what: root.drag-what;
+        kind: "album";
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
     }
 }
 
@@ -158,37 +166,46 @@ export component AlbumsPage inherits Rectangle {
     callback add-folder();
     /// The covers from the first to the last index are (about to be) on screen.
     callback covers-visible(int, int);
+    /// The albums on screen changed (first and last index).
+    callback visible-range(int, int);
 
-    // Phone: the covers share the width (two or more per row).
+    // Width for the cards: 20px margins plus the scrollbar lane, so the last
+    // column is never under the scrollbar.
+    property <length> avail: root.width - 40px - Theme.scroll-gutter;
+    // As many columns as fit at the smallest card size (160px cover + 24px);
+    // on a phone the covers share the width (two or more per row)…
     property <int> cols: Theme.phone
         ? Math.max(2, Math.floor((root.width - 16px) / 170px))
-        : Math.max(1, Math.floor((root.width - 40px) / 184px));
-    property <length> cell-w: Theme.phone ? (root.width - 16px) / root.cols : 184px;
-    property <length> art: Theme.phone ? root.cell-w - 24px : 160px;
+        : Math.max(1, Math.floor(root.avail / 184px));
+    // …and the cards grow to fill the row exactly, with no gap on the right.
+    property <length> cell-w: Theme.phone ? (root.width - 16px) / root.cols : Math.max(184px, root.avail / root.cols);
+    property <length> art: Math.floor((root.cell-w - 24px) / 1px) * 1px;
     property <length> cell-h: root.art + 80px;
     property <length> left: Theme.phone ? 8px : 20px;
 
-    function report-visible(top: length, height: length) {
-        // One row above and below what is on screen.
-        root.covers-visible(
-            Math.max(0, Math.floor(top / root.cell-h) - 1) * root.cols,
-            (Math.ceil((top + height) / root.cell-h) + 1) * root.cols - 1);
-    }
-
     if root.albums.length > 0: ScrollView {
+        horizontal-scrollbar-policy: always-off;
         width: parent.width;
         height: parent.height;
         content-width: self.visible-width;
         content-height: Math.ceil(root.albums.length / root.cols) * root.cell-h + 32px;
-        init => { root.report-visible(-self.viewport-y, self.height); }
-        changed viewport-y => { root.report-visible(-self.viewport-y, self.height); }
-        changed height => { root.report-visible(-self.viewport-y, self.height); }
+        // Which cards are on screen, reported (one row at a time) so only
+        // those pictures are kept in memory, plus a margin.
+        property <int> first-row: Math.max(0, Math.floor((-self.content-y - 8px) / root.cell-h));
+        property <int> rows-shown: Math.ceil(self.visible-height / root.cell-h) + 1;
+        property <int> first-item: self.first-row * root.cols;
+        property <int> last-item: Math.min(root.albums.length - 1, (self.first-row + self.rows-shown) * root.cols - 1);
+        init => { root.visible-range(self.first-item, self.last-item); root.covers-visible(self.first-item, self.last-item); }
+        changed first-item => { root.visible-range(self.first-item, self.last-item); root.covers-visible(self.first-item, self.last-item); }
+        changed last-item => { root.visible-range(self.first-item, self.last-item); root.covers-visible(self.first-item, self.last-item); }
         for album[i] in root.albums: AlbumCard {
             x: root.left + Math.mod(i, root.cols) * root.cell-w;
             y: 8px + Math.floor(i / root.cols) * root.cell-h;
             art: root.art;
             item: album;
+            art: root.art;
             playing: album.key != "" && album.key == root.playing-album;
+            drag-what: "album:" + i;
             clicked => { root.open-album(i); }
         }
     }
@@ -216,6 +233,8 @@ export component TrackRow inherits Rectangle {
     in property <bool> gestures: false;
     /// Songs are picked: a tap picks or lets go instead of playing.
     in property <bool> picking: false;
+    /// What a drag of the row carries (see Dnd.payload); "" = not draggable.
+    in property <string> drag-what;
     callback activated;
     /// "…" button pressed; position (window coordinates) for the menu.
     callback menu(length, length);
@@ -226,6 +245,17 @@ export component TrackRow inherits Rectangle {
     callback swiped(bool);
     /// A sideways swipe started (true) or ended (false).
     callback swiping(bool);
+    /// Playlists: a drag handle at the start of the row reorders the songs.
+    in property <bool> reorderable: false;
+    /// While reordering: this row is the one being moved.
+    in property <bool> dimmed: false;
+    /// While reordering: where the moved song will land (0 = not here,
+    /// 1 = above this row, 2 = below it).
+    in property <int> drop-line: 0;
+    callback reorder-start();
+    /// The handle was dragged this far (down is positive) since the start.
+    callback reorder-move(length);
+    callback reorder-end();
 
     /// "Cozy" rows are a desktop choice; phones always get the taller rows.
     property <bool> cozy: Theme.compact && !Theme.phone;
@@ -258,21 +288,28 @@ export component TrackRow inherits Rectangle {
     }
 
     height: Theme.phone ? 54px : root.cozy ? 30px : 46px;
-    border-radius: root.cozy ? 4px : 6px;
+    opacity: root.dimmed ? 0.45 : 1.0;
     clip: root.gestures;
-    background: root.item.selected ? (Theme.dark ? #8f72ff55 : #6a46f540)
-        : root.current ? Theme.accent-soft
-        : touch.has-hover ? Theme.surface-hover
-        : root.striped ? (Theme.dark ? #ffffff0a : #0000000a)
-        : transparent;
-    animate background { duration: 120ms; }
+    // Highlight, kept clear of the scrollbar lane.
+    Rectangle {
+        x: 0px;
+        width: parent.width - Theme.scroll-gutter;
+        height: parent.height;
+        border-radius: root.cozy ? 4px : 6px;
+        background: root.item.selected ? (Theme.dark ? #8f72ff55 : #6a46f540)
+            : root.current ? Theme.accent-soft
+            : touch.has-hover ? Theme.surface-hover
+            : root.striped ? (Theme.dark ? #ffffff0a : #0000000a)
+            : transparent;
+        animate background { duration: 120ms; }
+    }
 
     // What the swipe will do, shown in the space the row slides away from.
     if root.gestures && root.drag-x > 0px: Rectangle {
         x: 0;
         width: root.drag-x;
         clip: true;
-        border-radius: parent.border-radius;
+        border-radius: root.cozy ? 4px : 6px;
         background: Theme.accent;
         opacity: Math.min(1, root.drag-x / root.swipe-limit);
         HorizontalLayout {
@@ -301,7 +338,7 @@ export component TrackRow inherits Rectangle {
         x: root.width + root.drag-x;
         width: -root.drag-x;
         clip: true;
-        border-radius: parent.border-radius;
+        border-radius: root.cozy ? 4px : 6px;
         // Android: dark purple (swipe right uses the accent); the desktop keeps grey.
         background: Theme.mobile ? #3b2580 : Theme.dark ? #3a3a48 : #4a4a58;
         opacity: Math.min(1, -root.drag-x / root.swipe-limit);
@@ -358,50 +395,64 @@ export component TrackRow inherits Rectangle {
         }
     }
 
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => {
-            // A release after a swipe or a long press is not a tap (the
-            // tap may arrive before or after the release event).
-            if (root.gestures && (root.long-pressed || root.sideways || root.swiped-away)) { return; }
-            if (root.gestures && root.picking) {
-                root.toggle-selected();
-                return;
+    DragSource {
+        // Phones swipe and long-press the rows instead of dragging them.
+        enabled: root.drag-what != "" && !root.gestures;
+        what: root.drag-what;
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                // A release after a swipe or a long press is not a tap (the
+                // tap may arrive before or after the release event).
+                if (root.gestures && (root.long-pressed || root.sideways || root.swiped-away)) { return; }
+                if (root.gestures && root.picking) {
+                    root.toggle-selected();
+                    return;
+                }
+                root.activated();
             }
-            root.activated();
+            pointer-event(event) => {
+                if (!root.gestures) { return; }
+                if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                    root.long-pressed = false;
+                    root.sideways = false;
+                    root.swiped-away = false;
+                    root.following = true;
+                    root.holding = true;
+                }
+                if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    root.finish-swipe();
+                }
+            }
+            moved => {
+                if (!root.gestures || !self.pressed) { return; }
+                if (Math.abs((self.mouse-x - self.pressed-x) / 1px) > 10 || Math.abs((self.mouse-y - self.pressed-y) / 1px) > 10) {
+                    root.holding = false;
+                }
+                if (!root.sideways && !root.long-pressed
+                    && Math.abs((self.mouse-x - self.pressed-x) / 1px) > 12
+                    && Math.abs((self.mouse-x - self.pressed-x) / 1px) > 1.5 * Math.abs((self.mouse-y - self.pressed-y) / 1px)) {
+                    root.sideways = true;
+                    root.swiping(true);
+                }
+                if (root.sideways) {
+                    root.drag-x = Math.max(-root.width * 0.6, Math.min(root.width * 0.6, self.mouse-x - self.pressed-x));
+                }
+            }
+            changed pressed => {
+                // Taken over by scrolling, or the pointer left the window.
+                if (!self.pressed) { root.finish-swipe(); }
+            }
         }
-        pointer-event(event) => {
-            if (!root.gestures) { return; }
-            if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
-                root.long-pressed = false;
-                root.sideways = false;
-                root.swiped-away = false;
-                root.following = true;
-                root.holding = true;
-            }
-            if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                root.finish-swipe();
-            }
-        }
-        moved => {
-            if (!root.gestures || !self.pressed) { return; }
-            if (Math.abs((self.mouse-x - self.pressed-x) / 1px) > 10 || Math.abs((self.mouse-y - self.pressed-y) / 1px) > 10) {
-                root.holding = false;
-            }
-            if (!root.sideways && !root.long-pressed
-                && Math.abs((self.mouse-x - self.pressed-x) / 1px) > 12
-                && Math.abs((self.mouse-x - self.pressed-x) / 1px) > 1.5 * Math.abs((self.mouse-y - self.pressed-y) / 1px)) {
-                root.sideways = true;
-                root.swiping(true);
-            }
-            if (root.sideways) {
-                root.drag-x = Math.max(-root.width * 0.6, Math.min(root.width * 0.6, self.mouse-x - self.pressed-x));
-            }
-        }
-        changed pressed => {
-            // Taken over by scrolling, or the pointer left the window.
-            if (!self.pressed) { root.finish-swipe(); }
-        }
+    }
+
+    if root.drop-line != 0: Rectangle {
+        x: 0px;
+        y: root.drop-line == 1 ? 0px : parent.height - 3px;
+        width: parent.width - Theme.scroll-gutter;
+        height: 3px;
+        border-radius: 2px;
+        background: Theme.accent;
     }
 
     content := HorizontalLayout {
@@ -411,9 +462,37 @@ export component TrackRow inherits Rectangle {
         opacity: root.faded ? 0 : 1;
         animate x { duration: root.following ? 0ms : 180ms; easing: ease-out; }
         animate opacity { duration: root.faded ? 0ms : 220ms; }
-        padding-left: Theme.phone ? 4px : 12px;
-        padding-right: Theme.phone ? 4px : 20px;
-        spacing: Theme.phone ? 10px : 16px;
+        padding-left: Theme.phone || root.reorderable ? 4px : 12px;
+        padding-right: Theme.phone ? 4px : 12px + Theme.scroll-gutter;
+        spacing: Theme.phone ? 10px : root.reorderable ? 8px : 16px;
+        // Drag handle (playlists).
+        if root.reorderable: Rectangle {
+            width: 24px;
+            Image {
+                source: @image-url("icons/drag.svg");
+                width: 16px;
+                height: 16px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                colorize: handle.has-hover || handle.pressed ? Theme.fg : Theme.fg-muted;
+            }
+            handle := TouchArea {
+                mouse-cursor: move;
+                pointer-event(event) => {
+                    if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                        root.reorder-start();
+                    }
+                    if (event.kind == PointerEventKind.up) {
+                        root.reorder-end();
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        root.reorder-move(self.mouse-y - self.pressed-y);
+                    }
+                }
+            }
+        }
         Rectangle {
             width: 28px;
             if !root.current: Text {
@@ -501,6 +580,8 @@ export component TrackRow inherits Rectangle {
 export component AlbumDetailPage inherits Rectangle {
     in property <AlbumItem> album;
     in property <string> info;
+    /// The album's genre(s), from its songs' tags ("" = unknown).
+    in property <string> genre;
     in property <[TrackItem]> tracks;
     in property <string> current-key;
     callback play(bool);
@@ -515,10 +596,21 @@ export component AlbumDetailPage inherits Rectangle {
         spacing: Theme.phone ? 12px : 20px;
         HorizontalLayout {
             spacing: Theme.phone ? 14px : 24px;
-            Artwork {
-                size: Theme.phone ? 112px : 200px;
-                source: root.album.cover;
-                has-image: root.album.has-cover;
+            // Drag the cover to add the whole album.
+            Rectangle {
+                width: Theme.phone ? 112px : 200px;
+                height: self.width;
+                Artwork {
+                    size: parent.width;
+                    source: root.album.cover;
+                    has-image: root.album.has-cover;
+                }
+                DragSource {
+                    enabled: !Theme.mobile;
+                    what: "song:3:0";
+                    kind: "album";
+                    TouchArea { mouse-cursor: grab; }
+                }
             }
             VerticalLayout {
                 alignment: end;
@@ -540,7 +632,9 @@ export component AlbumDetailPage inherits Rectangle {
                 }
                 Text {
                     min-width: 0px;
-                    text: root.album.year == "" ? root.album.artist : root.album.artist + " • " + root.album.year;
+                    text: root.album.artist
+                        + (root.album.year == "" ? "" : " • " + root.album.year)
+                        + (root.genre == "" ? "" : " • " + root.genre);
                     color: Theme.fg;
                     font-size: Theme.phone ? 14px : 15px;
                     overflow: elide;
@@ -607,12 +701,14 @@ export component AlbumDetailPage inherits Rectangle {
             }
         }
         ListView {
+            horizontal-scrollbar-policy: always-off;
             vertical-stretch: 1;
             for track[i] in root.tracks: TrackRow {
                 item: track;
                 show-album: false;
                 striped: Math.mod(i, 2) == 1;
                 current: track.key == root.current-key;
+                drag-what: "song:0:" + i;
                 activated => { root.play-track(i); }
                 menu(x, y) => { root.track-menu(i, x, y); }
             }
@@ -620,9 +716,94 @@ export component AlbumDetailPage inherits Rectangle {
     }
 }
 
+/// An artist in the Artists grid: a round photo (or album cover, or a big
+/// initial), the name and how much music there is.
+component ArtistCard inherits Rectangle {
+    in property <ArtistItem> item;
+    in property <length> art: 160px;
+    in property <string> drag-what;
+    callback clicked;
+
+    width: root.art + 16px;
+    height: root.art + 64px;
+    border-radius: 12px;
+    background: touch.has-hover ? Theme.surface : transparent;
+    animate background { duration: 120ms; }
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 4px;
+        Rectangle {
+            width: root.art;
+            height: root.art;
+            border-radius: root.art / 2;
+            clip: true;
+            background: @linear-gradient(135deg, Theme.accent 0%, #d061ff 100%);
+            if !root.item.has-image: Text {
+                width: parent.width;
+                height: parent.height;
+                text: root.item.initial;
+                color: white;
+                font-size: root.art * 0.38;
+                font-weight: 800;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            if root.item.has-image: Image {
+                width: parent.width;
+                height: parent.height;
+                source: root.item.image;
+                image-fit: cover;
+            }
+            // A thin ring, and a lighter one on hover.
+            Rectangle {
+                border-radius: parent.border-radius;
+                border-width: touch.has-hover ? 3px : 1px;
+                border-color: touch.has-hover ? Theme.accent : Theme.fg.transparentize(0.88);
+            }
+        }
+        Rectangle { height: 4px; }
+        Text {
+            text: root.item.name;
+            color: Theme.fg;
+            font-size: 13px;
+            font-weight: 600;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: root.item.info;
+            color: Theme.fg-muted;
+            font-size: 12px;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    DragSource {
+        enabled: root.drag-what != "";
+        what: root.drag-what;
+        kind: "artist";
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
+    }
+}
+
 export component ArtistsPage inherits Rectangle {
     in property <[ArtistItem]> artists;
     callback open-artist(int);
+    /// The artists on screen changed (first and last index).
+    callback visible-range(int, int);
+
+    // The same grid as the Albums page: as many columns as fit, cards
+    // grown to fill the row, clear of the scrollbar lane.
+    property <length> avail: root.width - 40px - Theme.scroll-gutter;
+    property <int> cols: Math.max(1, Math.floor(root.avail / 184px));
+    property <length> cell-w: Math.max(184px, root.avail / root.cols);
+    property <length> art: Math.floor((root.cell-w - 24px) / 1px) * 1px;
+    property <length> cell-h: root.art + 72px;
 
     if root.artists.length == 0: EmptyState {
         width: parent.width;
@@ -631,57 +812,28 @@ export component ArtistsPage inherits Rectangle {
         title: "No artists yet";
         message: "Artists appear here once your music folders are scanned.";
     }
-    if root.artists.length > 0: ListView {
+    if root.artists.length > 0: ScrollView {
+        horizontal-scrollbar-policy: always-off;
         width: parent.width;
         height: parent.height;
-        for artist[i] in root.artists: Rectangle {
-            height: 60px;
-            border-radius: 8px;
-            background: touch.has-hover ? Theme.surface : transparent;
-            touch := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { root.open-artist(i); }
-            }
-            HorizontalLayout {
-                padding-left: 20px;
-                padding-right: 20px;
-                spacing: 14px;
-                VerticalLayout {
-                    alignment: center;
-                    Rectangle {
-                        width: 40px;
-                        height: 40px;
-                        border-radius: 20px;
-                        background: Theme.accent-soft;
-                        Text {
-                            width: parent.width;
-                            height: parent.height;
-                            text: artist.initial;
-                            color: Theme.accent;
-                            font-size: 16px;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-                VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 1;
-                    Text {
-                        text: artist.name;
-                        color: Theme.fg;
-                        font-size: 14px;
-                        font-weight: 600;
-                        overflow: elide;
-                    }
-                    Text {
-                        text: artist.info;
-                        color: Theme.fg-muted;
-                        font-size: 12px;
-                    }
-                }
-            }
+        content-width: self.visible-width;
+        content-height: Math.ceil(root.artists.length / root.cols) * root.cell-h + 32px;
+        // Which cards are on screen, reported (one row at a time) so only
+        // those pictures are kept in memory, plus a margin.
+        property <int> first-row: Math.max(0, Math.floor((-self.content-y - 8px) / root.cell-h));
+        property <int> rows-shown: Math.ceil(self.visible-height / root.cell-h) + 1;
+        property <int> first-item: self.first-row * root.cols;
+        property <int> last-item: Math.min(root.artists.length - 1, (self.first-row + self.rows-shown) * root.cols - 1);
+        init => { root.visible-range(self.first-item, self.last-item); }
+        changed first-item => { root.visible-range(self.first-item, self.last-item); }
+        changed last-item => { root.visible-range(self.first-item, self.last-item); }
+        for artist[i] in root.artists: ArtistCard {
+            x: 20px + Math.mod(i, root.cols) * root.cell-w;
+            y: 8px + Math.floor(i / root.cols) * root.cell-h;
+            item: artist;
+            art: root.art;
+            drag-what: "artist:" + i;
+            clicked => { root.open-artist(i); }
         }
     }
 }
@@ -757,6 +909,7 @@ export component SongsPage inherits Rectangle {
                 current: song.key == root.current-key;
                 gestures: true;
                 picking: root.selection-count > 0;
+                drag-what: "song:1:" + i;
                 activated => { root.play-song(i); }
                 menu(x, y) => { root.track-menu(i, x, y); }
                 toggle-selected => { root.toggle-selected(i); }
@@ -807,12 +960,67 @@ export component SongsPage inherits Rectangle {
     }
 }
 
+/// A filter button of the Radio page: shows the choice and opens its list.
+
+/// A Radio page browse button: the filter (or the choice) and a chevron.
+component FilterButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked;
+
+    height: 30px;
+    width: filter-row.preferred-width;
+    border-radius: 15px;
+    background: root.selected ? Theme.accent-soft : (touch.has-hover ? Theme.surface-hover : transparent);
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+
+    filter-row := HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 8px;
+        spacing: 4px;
+        Text {
+            max-width: 200px;
+            overflow: elide;
+            text: root.text;
+            color: root.selected ? Theme.accent : Theme.fg;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("icons/chevron-down.svg");
+                width: 14px;
+                height: 14px;
+                colorize: root.selected ? Theme.accent : Theme.fg-muted;
+            }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 export component RadioPage inherits Rectangle {
     in property <[StationItem]> stations;
     in property <int> tab;
     // Filters: several can be on at once (genres OR, the rest AND).
-    in property <bool> hungary;
     in property <[bool]> genres-on;
+    /// The Country, Language, Tag, Format and Bitrate buttons: their text
+    /// (the choice, or the filter's name) and whether a choice is made.
+    in property <[string]> filter-labels;
+    in property <[bool]> filter-active;
+    /// The open filter's list ("Any" first), its title and search text.
+    in property <string> picker-title;
+    in property <[string]> picker-items;
+    in property <bool> picker-loading;
+    in-out property <string> picker-query;
+    callback open-picker(int);
+    callback picker-search(string);
+    callback picker-pick(int);
     in property <bool> filtered;
     in property <bool> loading;
     in property <string> status;
@@ -832,7 +1040,6 @@ export component RadioPage inherits Rectangle {
             alignment: start;
             Chip { text: "Popular"; selected: root.tab == 0; clicked => { root.select-tab(0); } }
             Chip { text: "Favorites"; selected: root.tab == 1; clicked => { root.select-tab(1); } }
-            Chip { text: "Hungary"; selected: root.hungary; clicked => { root.select-tab(2); } }
             Rectangle { width: 12px; }
             for g[i] in ["Pop", "Rock", "Jazz", "Classical", "Electronic", "News"]: Chip {
                 text: g;
@@ -862,17 +1069,42 @@ export component RadioPage inherits Rectangle {
                     alignment: start;
                     Chip { text: "Popular"; selected: root.tab == 0; clicked => { root.select-tab(0); } }
                     Chip { text: "Favorites"; selected: root.tab == 1; clicked => { root.select-tab(1); } }
-                    Chip { text: "Hungary"; selected: root.hungary; clicked => { root.select-tab(2); } }
                     for g[i] in ["Pop", "Rock", "Jazz", "Classical", "Electronic", "News"]: Chip {
                         text: g;
                         selected: root.genres-on[i];
                         clicked => { root.genre(i); }
+                    }
+                    // Browse by country, language, tag, format and bitrate.
+                    for label[i] in root.filter-labels: FilterButton {
+                        y: (parent.height - self.height) / 2;
+                        text: label;
+                        selected: root.filter-active[i];
+                        clicked => {
+                            root.open-picker(i);
+                            picker.show();
+                        }
                     }
                     PillButton {
                         text: "Add stream URL";
                         icon: @image-url("icons/plus.svg");
                         clicked => { root.add-stream(); }
                     }
+                }
+            }
+        }
+        // Browse by country, language, tag, format and bitrate.
+        filters := HorizontalLayout {
+            // On a phone these buttons are in the row above.
+            visible: !Theme.phone;
+            height: Theme.phone ? 0px : 30px;
+            spacing: 8px;
+            alignment: start;
+            for label[i] in root.filter-labels: FilterButton {
+                text: label;
+                selected: root.filter-active[i];
+                clicked => {
+                    root.open-picker(i);
+                    picker.show();
                 }
             }
         }
@@ -892,20 +1124,27 @@ export component RadioPage inherits Rectangle {
                     : (root.tab == 1 ? "Tap the heart next to a station to keep it here." : "Search for a station by name above.");
             }
             if root.stations.length > 0: ListView {
+                horizontal-scrollbar-policy: always-off;
                 width: parent.width;
                 height: parent.height;
                 for station[i] in root.stations: row := Rectangle {
                     property <bool> current: station.key == root.current-key;
                     height: 60px;
-                    border-radius: 8px;
-                    background: row.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
+                    // Highlight, kept clear of the scrollbar lane.
+                    Rectangle {
+                        x: 0px;
+                        width: parent.width - Theme.scroll-gutter;
+                        height: parent.height;
+                        border-radius: 8px;
+                        background: row.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
+                    }
                     touch := TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.play-station(i); }
                     }
                     HorizontalLayout {
                         padding-left: 12px;
-                        padding-right: 12px;
+                        padding-right: 12px + Theme.scroll-gutter;
                         spacing: 14px;
                         VerticalLayout {
                             alignment: center;
@@ -952,6 +1191,72 @@ export component RadioPage inherits Rectangle {
                                 size: 34px;
                                 icon-size: 18px;
                                 clicked => { root.toggle-favorite(i); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    picker := PopupWindow {
+        x: Theme.phone ? 12px : 24px;
+        y: Theme.phone ? 50px : filters.y + filters.height + 6px;
+        width: Math.min(340px, root.width - 24px);
+        height: Math.min(440px, root.height - self.y - 12px);
+        close-policy: close-on-click-outside;
+        Rectangle {
+            border-radius: 12px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000050;
+            VerticalLayout {
+                padding: 10px;
+                spacing: 8px;
+                Text {
+                    text: root.picker-title;
+                    color: Theme.fg;
+                    font-size: 14px;
+                    font-weight: 700;
+                }
+                SearchBox {
+                    placeholder: "Search";
+                    text <=> root.picker-query;
+                    edited(t) => { root.picker-search(t); }
+                }
+                if root.picker-loading: Text {
+                    text: "Loading…";
+                    color: Theme.fg-muted;
+                    font-size: 12px;
+                }
+                ListView {
+                    vertical-stretch: 1;
+                    horizontal-scrollbar-policy: always-off;
+                    for item[i] in root.picker-items: Rectangle {
+                        height: 32px;
+                        Rectangle {
+                            x: 0px;
+                            width: parent.width - Theme.scroll-gutter;
+                            border-radius: 6px;
+                            background: pick-touch.has-hover ? Theme.surface-hover : transparent;
+                        }
+                        Text {
+                            x: 10px;
+                            width: parent.width - 20px - Theme.scroll-gutter;
+                            height: parent.height;
+                            text: item;
+                            color: Theme.fg;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        pick-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.picker-pick(i);
+                                picker.close();
                             }
                         }
                     }
@@ -1008,12 +1313,19 @@ export component QueuePage inherits Rectangle {
             }
         }
         ListView {
+            horizontal-scrollbar-policy: always-off;
             vertical-stretch: 1;
             for entry[i] in root.queue: Rectangle {
                 height: 52px;
-                border-radius: 8px;
                 opacity: root.drag-from == i ? 0.45 : 1.0;
-                background: entry.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
+                // Highlight, kept clear of the scrollbar lane.
+                Rectangle {
+                    x: 0px;
+                    width: parent.width - Theme.scroll-gutter;
+                    height: parent.height;
+                    border-radius: 8px;
+                    background: entry.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
+                }
                 touch := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { root.play-index(i); }
@@ -1022,14 +1334,14 @@ export component QueuePage inherits Rectangle {
                 if root.drag-from >= 0 && root.drop-target == i && i != root.drag-from: Rectangle {
                     x: 0px;
                     y: i < root.drag-from ? 0px : parent.height - 3px;
-                    width: parent.width;
+                    width: parent.width - Theme.scroll-gutter;
                     height: 3px;
                     border-radius: 2px;
                     background: Theme.accent;
                 }
                 HorizontalLayout {
                     padding-left: 4px;
-                    padding-right: 8px;
+                    padding-right: 8px + Theme.scroll-gutter;
                     spacing: 10px;
                     // Drag handle.
                     Rectangle {
@@ -1121,6 +1433,10 @@ component LyricsPanel inherits Rectangle {
     in property <bool> synced;
     in property <string> status;
     in property <string> source;
+    /// Lyrics found online for a song on this computer: they can be saved
+    /// with it (0 = as a file next to it, 1 = in the song's tags).
+    in property <bool> can-save;
+    callback save(int);
     property <length> line-h: 40px;
 
     border-radius: 16px;
@@ -1140,36 +1456,51 @@ component LyricsPanel inherits Rectangle {
         vertical-alignment: center;
         wrap: word-wrap;
     }
-    if root.lines.length > 0 && root.synced: VerticalLayout {
-        x: 24px;
-        width: parent.width - 48px;
-        y: parent.height * 0.42 - (Math.max(root.current, 0) + 0.5) * root.line-h;
-        animate y { duration: 380ms; easing: ease-in-out; }
-        for line[i] in root.lines: Text {
-            height: root.line-h;
-            text: line;
-            font-size: i == root.current ? 24px : 18px;
-            font-weight: i == root.current ? 800 : 600;
-            color: i == root.current ? Theme.fg : Theme.fg-muted.transparentize(i < root.current ? 0.35 : 0.0);
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            overflow: elide;
-            animate font-size { duration: 200ms; }
-        }
-    }
-    if root.lines.length > 0 && !root.synced: plain := ScrollView {
-        width: parent.width;
-        height: parent.height - 24px;
-        VerticalLayout {
-            width: plain.visible-width;
-            padding: 24px;
-            spacing: 4px;
-            for line in root.lines: Text {
+    // Lines are clipped inside the frame (not at its outer edge), so text
+    // scrolling past the top or bottom never runs over the border. The
+    // bottom strip is left free for the "Lyrics: …" source label.
+    Rectangle {
+        x: 1px;
+        y: 12px;
+        width: parent.width - 2px;
+        height: parent.height - 12px - 26px;
+        clip: true;
+
+        if root.lines.length > 0 && root.synced: synced-col := VerticalLayout {
+            x: 24px;
+            width: parent.width - 48px;
+            y: parent.height * 0.42 - (Math.max(root.current, 0) + 0.5) * root.line-h;
+            animate y { duration: 380ms; easing: ease-in-out; }
+            for line[i] in root.lines: Text {
+                height: root.line-h;
                 text: line;
-                color: Theme.fg;
-                font-size: 17px;
-                wrap: word-wrap;
+                font-size: i == root.current ? 24px : 18px;
+                font-weight: i == root.current ? 800 : 600;
+                color: i == root.current ? Theme.fg : Theme.fg-muted.transparentize(i < root.current ? 0.35 : 0.0);
                 horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+                // Fade out while scrolling off the top, instead of being cut in half.
+                opacity: Math.max(0, Math.min(1, (synced-col.y + i * root.line-h) / root.line-h));
+                animate font-size { duration: 200ms; }
+            }
+        }
+        if root.lines.length > 0 && !root.synced: plain := ScrollView {
+            horizontal-scrollbar-policy: always-off;
+            width: parent.width;
+            height: parent.height;
+            VerticalLayout {
+                width: plain.visible-width;
+                padding: 24px;
+                padding-top: 12px;
+                spacing: 4px;
+                for line in root.lines: Text {
+                    text: line;
+                    color: Theme.fg;
+                    font-size: 17px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                }
             }
         }
     }
@@ -1181,6 +1512,29 @@ component LyricsPanel inherits Rectangle {
         color: Theme.fg-muted;
         font-size: 11px;
         horizontal-alignment: right;
+    }
+    // Keep online lyrics: as a file next to the song, or in the song itself.
+    if root.can-save && root.lines.length > 0: HorizontalLayout {
+        x: 12px;
+        y: parent.height - 26px;
+        height: 22px;
+        spacing: 6px;
+        for label[i] in ["Save as file", "Save in song"]: Rectangle {
+            width: save-text.preferred-width + 20px;
+            border-radius: 11px;
+            background: save-touch.has-hover ? Theme.accent : Theme.fg.transparentize(0.9);
+            save-text := Text {
+                text: label;
+                color: save-touch.has-hover ? white : Theme.fg;
+                font-size: 11px;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+            save-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.save(i); }
+            }
+        }
     }
 }
 
@@ -1224,6 +1578,8 @@ export component NowPlayingPage inherits Rectangle {
     in property <bool> lyrics-synced;
     in property <string> lyrics-status;
     in property <string> lyrics-source;
+    in property <bool> lyrics-can-save;
+    callback save-lyrics(int);
     callback lyrics-open-changed(bool);
     // Like: the song is in the "Likes" playlist.
     in property <bool> can-like;
@@ -1392,6 +1748,8 @@ export component NowPlayingPage inherits Rectangle {
             synced: root.lyrics-synced;
             status: root.lyrics-status;
             source: root.lyrics-source;
+            can-save: root.lyrics-can-save;
+            save(kind) => { root.save-lyrics(kind); }
         }
         if !root.lyrics-open: Rectangle {
             vertical-stretch: 1;
@@ -1558,14 +1916,20 @@ export component SettingsPage inherits Rectangle {
     in property <bool> scanning;
     in property <bool> download-art;
     callback download-art-changed(bool);
+    in property <bool> sort-ignore-articles;
+    callback sort-ignore-articles-changed(bool);
     in property <int> crossfade;
     callback crossfade-changed(int);
     in property <bool> gapless-albums;
     callback gapless-albums-changed(bool);
     in property <bool> lyrics-online;
     callback lyrics-online-changed(bool);
+    in property <int> lyrics-autosave;
+    callback lyrics-autosave-changed(int);
     in property <bool> startup-sound;
     callback startup-sound-changed(bool);
+    in property <bool> resume-session;
+    callback resume-session-changed(bool);
     callback theme-selected(int);
     callback density-changed(bool);
     callback opacity-changed(float);
@@ -1584,6 +1948,7 @@ export component SettingsPage inherits Rectangle {
     callback open-server(int);
 
     scroll := ScrollView {
+        horizontal-scrollbar-policy: always-off;
         width: parent.width;
         height: parent.height;
         content-width: self.visible-width;
@@ -1675,10 +2040,31 @@ export component SettingsPage inherits Rectangle {
                     Chip { text: "On"; selected: root.lyrics-online; clicked => { root.lyrics-online-changed(true); } }
                     Chip { text: "Off"; selected: !root.lyrics-online; clicked => { root.lyrics-online-changed(false); } }
                 }
+                if !Theme.mobile: SettingRow {
+                    label: "Save lyrics found online";
+                    for label[i] in ["Off", "As file", "In song", "Both"]: Chip {
+                        text: label;
+                        selected: root.lyrics-autosave == i;
+                        clicked => { root.lyrics-autosave-changed(i); }
+                    }
+                }
                 SettingRow {
                     label: "Startup sound";
                     Chip { text: "On"; selected: root.startup-sound; clicked => { root.startup-sound-changed(true); } }
                     Chip { text: "Off"; selected: !root.startup-sound; clicked => { root.startup-sound-changed(false); } }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        width: 180px;
+                        text: "Continue where I left off";
+                        color: Theme.fg-muted;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                    Chip { text: "On"; selected: root.resume-session; clicked => { root.resume-session-changed(true); } }
+                    Chip { text: "Off"; selected: !root.resume-session; clicked => { root.resume-session-changed(false); } }
+                    Rectangle { horizontal-stretch: 1; }
                 }
                 Text {
                     text: "Crossfade blends the end of a song into the next one when one song follows another on its own (not when you skip). "
@@ -1749,6 +2135,19 @@ export component SettingsPage inherits Rectangle {
                     }
                     Chip { text: "On"; selected: root.download-art; clicked => { root.download-art-changed(true); } }
                     Chip { text: "Off"; selected: !root.download-art; clicked => { root.download-art-changed(false); } }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "Ignore \"The\", \"A\" and \"An\" when sorting (The Beatles under B)";
+                        color: Theme.fg-muted;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                    Chip { text: "On"; selected: root.sort-ignore-articles; clicked => { root.sort-ignore-articles-changed(true); } }
+                    Chip { text: "Off"; selected: !root.sort-ignore-articles; clicked => { root.sort-ignore-articles-changed(false); } }
                 }
                 HorizontalLayout {
                     alignment: start;
@@ -1841,7 +2240,9 @@ export component SettingsPage inherits Rectangle {
                     { keys: "Space", action: "Play / pause" },
                     { keys: "← / →", action: "Seek 5 seconds back / forward" },
                     { keys: "⌘/Ctrl + ← / →", action: "Previous / next track" },
-                    { keys: "↑ / ↓", action: "Volume up / down" },
+                    { keys: "↑ / ↓", action: "Volume up / down (or the mouse wheel over the volume bar)" },
+                    { keys: "M", action: "Mute / unmute (or click the speaker)" },
+                    { keys: "⌘/Ctrl + Shift + M", action: "Mini player / back to the full window" },
                     { keys: "⌘/Ctrl + F  or  /", action: "Search" },
                     { keys: "V", action: "Full-screen visualizer (← → change style, Esc exits)" },
                     { keys: "S / R", action: "Shuffle / repeat" },
@@ -1894,6 +2295,12 @@ export component PlaylistPage inherits Rectangle {
     callback export();
     callback track-menu(int, length, length);
     callback density-changed(bool);
+    /// Move the song at the first index to the second.
+    callback move-track(int, int);
+    /// Reordering by dragging a song's handle.
+    property <int> drag-from: -1;
+    property <int> drop-target: -1;
+    property <length> row-h: Theme.compact ? 30px : 46px;
 
     VerticalLayout {
         padding: Theme.phone ? 12px : 24px;
@@ -1955,7 +2362,9 @@ export component PlaylistPage inherits Rectangle {
                 }
                 Text {
                     min-width: 0px;
-                    text: root.editing ? "Press Enter to save the new name" : Theme.phone ? root.info + "  ·  tap the name to rename" : root.info + "  ·  click the name to rename";
+                    text: root.editing ? "Press Enter to save the new name"
+                        : Theme.phone ? root.info + "  ·  tap the name to rename"
+                        : root.info + "  ·  click the name to rename" + (root.tracks.length > 1 ? ", drag the handle to reorder" : "");
                     color: Theme.fg-muted;
                     font-size: 13px;
                     wrap: word-wrap;
@@ -2024,16 +2433,39 @@ export component PlaylistPage inherits Rectangle {
             vertical-stretch: 1;
             icon: @image-url("icons/playlist.svg");
             title: "This playlist is empty";
-            message: "Use the … button next to any song or album to add it here.";
+            message: "Use the … button next to any song or album, or drag songs, albums, artists or podcasts onto this playlist in the sidebar.";
         }
         if root.tracks.length > 0: ListView {
+            horizontal-scrollbar-policy: always-off;
             vertical-stretch: 1;
             for track[i] in root.tracks: TrackRow {
                 item: track;
                 striped: Math.mod(i, 2) == 1;
                 current: track.key == root.current-key;
+                drag-what: "song:2:" + i;
+                reorderable: root.tracks.length > 1;
+                dimmed: root.drag-from == i;
+                drop-line: root.drag-from < 0 || root.drop-target != i || i == root.drag-from ? 0
+                    : (i < root.drag-from ? 1 : 2);
                 activated => { root.play-track(i); }
                 menu(x, y) => { root.track-menu(i, x, y); }
+                reorder-start => {
+                    root.drag-from = i;
+                    root.drop-target = i;
+                }
+                reorder-move(dy) => {
+                    if (root.drag-from >= 0) {
+                        root.drop-target = Math.max(0, Math.min(root.tracks.length - 1,
+                            root.drag-from + Math.round(dy / root.row-h)));
+                    }
+                }
+                reorder-end => {
+                    if (root.drag-from >= 0 && root.drop-target != root.drag-from) {
+                        root.move-track(root.drag-from, root.drop-target);
+                    }
+                    root.drag-from = -1;
+                    root.drop-target = -1;
+                }
             }
         }
     }
@@ -2044,20 +2476,33 @@ component PodcastRow inherits Rectangle {
     in property <PodcastItem> item;
     in property <bool> show-subscribe;
     in property <bool> show-favorite;
+    /// What a drag of the row carries (see Dnd.payload); "" = not draggable.
+    in property <string> drag-what;
     callback clicked();
     callback subscribe();
     callback toggle-favorite();
 
     height: 72px;
-    border-radius: 8px;
-    background: touch.has-hover ? Theme.surface : transparent;
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+    // Highlight, kept clear of the scrollbar lane.
+    Rectangle {
+        x: 0px;
+        width: parent.width - Theme.scroll-gutter;
+        height: parent.height;
+        border-radius: 8px;
+        background: touch.has-hover ? Theme.surface : transparent;
+    }
+    DragSource {
+        enabled: root.drag-what != "";
+        what: root.drag-what;
+        kind: "podcast";
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.clicked(); }
+        }
     }
     HorizontalLayout {
         padding-left: 12px;
-        padding-right: 12px;
+        padding-right: 12px + Theme.scroll-gutter;
         spacing: 14px;
         VerticalLayout {
             alignment: center;
@@ -2154,6 +2599,7 @@ export component PodcastsPage inherits Rectangle {
         Rectangle {
             vertical-stretch: 1;
             if root.searching && root.results.length > 0: ListView {
+                horizontal-scrollbar-policy: always-off;
                 width: parent.width;
                 height: parent.height;
                 for show[i] in root.results: PodcastRow {
@@ -2178,12 +2624,14 @@ export component PodcastsPage inherits Rectangle {
                 message: "Search for a show in the box above, or paste its RSS link, then subscribe.";
             }
             if !root.searching && root.shows.length > 0: ListView {
+                horizontal-scrollbar-policy: always-off;
                 width: parent.width;
                 height: parent.height;
                 for show[i] in root.shows: PodcastRow {
                     item: show;
                     show-subscribe: false;
                     show-favorite: true;
+                    drag-what: "show:" + i;
                     clicked => { root.open-show(i); }
                     toggle-favorite => { root.toggle-favorite(i); }
                 }
@@ -2300,20 +2748,31 @@ export component PodcastsPage inherits Rectangle {
                 message: root.loading ? "" : "This feed has no audio episodes yet.";
             }
             if root.episodes.length > 0: ListView {
+                horizontal-scrollbar-policy: always-off;
                 width: parent.width;
                 height: parent.height;
                 for ep[i] in root.episodes: row := Rectangle {
                     property <bool> current: ep.key == root.current-key;
                     height: 58px;
-                    border-radius: 8px;
-                    background: row.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
-                    touch := TouchArea {
-                        mouse-cursor: pointer;
-                        clicked => { root.play-episode(i); }
+                    // Highlight, kept clear of the scrollbar lane.
+                    Rectangle {
+                        x: 0px;
+                        width: parent.width - Theme.scroll-gutter;
+                        height: parent.height;
+                        border-radius: 8px;
+                        background: row.current ? Theme.accent-soft : (touch.has-hover ? Theme.surface : transparent);
+                    }
+                    DragSource {
+                        what: "episode:" + i;
+                        kind: "podcast";
+                        touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.play-episode(i); }
+                        }
                     }
                     HorizontalLayout {
                         padding-left: 12px;
-                        padding-right: 12px;
+                        padding-right: 12px + Theme.scroll-gutter;
                         spacing: 12px;
                         VerticalLayout {
                             alignment: center;
@@ -2356,6 +2815,261 @@ export component PodcastsPage inherits Rectangle {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// A number on the Statistics page ("1,204" / "Plays").
+export struct StatTile {
+    value: string,
+    label: string,
+}
+
+/// A row of a top list: the song (artist), how often, and its share of the
+/// first row's plays for the bar behind it.
+export struct StatRow {
+    name: string,
+    detail: string,
+    count: string,
+    share: float,
+}
+
+/// A day of the listening chart: its short label, its share of the
+/// busiest day and the time listened.
+export struct DayBar {
+    label: string,
+    share: float,
+    tip: string,
+}
+
+component StatCard inherits Rectangle {
+    in property <StatTile> tile;
+    horizontal-stretch: 1;
+    min-width: 120px;
+    height: 78px;
+    border-radius: 14px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 2px;
+        alignment: center;
+        Text {
+            text: root.tile.value;
+            color: Theme.fg;
+            font-size: 22px;
+            font-weight: 800;
+            overflow: elide;
+        }
+        Text {
+            text: root.tile.label;
+            color: Theme.fg-muted;
+            font-size: 12px;
+            overflow: elide;
+        }
+    }
+}
+
+component TopList inherits Rectangle {
+    in property <string> title;
+    in property <[StatRow]> rows;
+    horizontal-stretch: 1;
+    min-width: 240px;
+    border-radius: 14px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 6px;
+        alignment: start;
+        Text {
+            text: root.title;
+            color: Theme.fg;
+            font-size: 15px;
+            font-weight: 700;
+        }
+        if root.rows.length == 0: Text {
+            text: "Nothing played yet";
+            color: Theme.fg-muted;
+            font-size: 12px;
+        }
+        for row[i] in root.rows: Rectangle {
+            height: 34px;
+            // The bar: this row's plays against the most played.
+            Rectangle {
+                x: 0px;
+                width: Math.max(6px, parent.width * row.share);
+                border-radius: 6px;
+                background: Theme.accent-soft;
+            }
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 8px;
+                Text {
+                    width: 18px;
+                    text: i + 1;
+                    color: Theme.fg-muted;
+                    font-size: 12px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: row.detail == "" ? row.name : row.name + "  ·  " + row.detail;
+                    color: Theme.fg;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Text {
+                    text: row.count;
+                    color: Theme.fg-muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+/// Listening statistics: library totals, plays, top songs, artists, albums
+/// and genres, and the time listened per day.
+export component StatisticsPage inherits Rectangle {
+    /// 0 = last 30 days, 1 = all time.
+    in property <int> period;
+    in property <[StatTile]> tiles;
+    in property <[StatTile]> library-tiles;
+    in property <[DayBar]> days;
+    in property <string> days-total;
+    in property <[StatRow]> songs;
+    in property <[StatRow]> artists;
+    in property <[StatRow]> albums;
+    in property <[StatRow]> genres;
+    in property <bool> empty;
+    callback period-changed(int);
+
+    scroll := ScrollView {
+        horizontal-scrollbar-policy: always-off;
+        width: parent.width;
+        height: parent.height;
+        content-width: self.visible-width;
+        content-height: content.preferred-height;
+        content := VerticalLayout {
+            width: scroll.visible-width;
+            padding: 24px;
+            padding-top: 4px;
+            padding-right: 24px + Theme.scroll-gutter;
+            spacing: 16px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Chip { text: "Last 30 days"; selected: root.period == 0; clicked => { root.period-changed(0); } }
+                Chip { text: "All time"; selected: root.period == 1; clicked => { root.period-changed(1); } }
+            }
+            if root.empty: Text {
+                text: "Nothing played yet. A song counts once you've listened to 30 seconds of it (or half, for short ones).";
+                color: Theme.fg-muted;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                for t in root.tiles: StatCard { tile: t; }
+            }
+
+            // Listening time per day, last 30 days.
+            Rectangle {
+                height: 190px;
+                border-radius: 14px;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+                    HorizontalLayout {
+                        Text {
+                            horizontal-stretch: 1;
+                            text: "Listening time, last 30 days";
+                            color: Theme.fg;
+                            font-size: 15px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.days-total;
+                            color: Theme.fg-muted;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    chart := HorizontalLayout {
+                        vertical-stretch: 1;
+                        spacing: 3px;
+                        for d in root.days: day := Rectangle {
+                            horizontal-stretch: 1;
+                            Rectangle {
+                                y: parent.height - 16px - self.height;
+                                width: parent.width;
+                                height: d.share > 0 ? Math.max(3px, (parent.height - 18px) * d.share) : 1px;
+                                border-radius: 3px;
+                                background: d.share > 0 ? (day-touch.has-hover ? Theme.accent-hover : Theme.accent) : Theme.border;
+                            }
+                            Text {
+                                y: parent.height - 13px;
+                                width: parent.width;
+                                text: d.label;
+                                color: Theme.fg-muted;
+                                font-size: 9px;
+                                horizontal-alignment: center;
+                            }
+                            day-touch := TouchArea { }
+                            if day-touch.has-hover && d.tip != "": Rectangle {
+                                y: 0px;
+                                width: tip-text.preferred-width + 12px;
+                                x: (parent.width - self.width) / 2;
+                                height: 22px;
+                                border-radius: 6px;
+                                background: Theme.fg;
+                                tip-text := Text {
+                                    text: d.tip;
+                                    color: Theme.bg;
+                                    font-size: 11px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+                TopList { title: "Top songs"; rows: root.songs; }
+                TopList { title: "Top artists"; rows: root.artists; }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                TopList { title: "Top albums"; rows: root.albums; }
+                TopList { title: "Top genres"; rows: root.genres; }
+            }
+
+            Text {
+                text: "Your library";
+                color: Theme.fg;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                for t in root.library-tiles: StatCard { tile: t; }
             }
         }
     }

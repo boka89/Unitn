@@ -10,6 +10,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.drawable.Icon;
 import android.media.AudioManager;
 import android.media.MediaMetadata;
@@ -43,6 +45,8 @@ public class PlaybackService extends Service {
     private boolean hasFocus;
     private boolean noisyRegistered;
     private boolean playing;
+    private String coverPath = "";
+    private Bitmap coverBitmap;
 
     private final AudioManager.OnAudioFocusChangeListener focusListener = new AudioManager.OnAudioFocusChangeListener() {
         @Override
@@ -121,6 +125,7 @@ public class PlaybackService extends Service {
         String action = intent == null ? null : intent.getAction();
         if (ACTION_UPDATE.equals(action)) {
             update(intent.getStringExtra("title"), intent.getStringExtra("artist"), intent.getStringExtra("album"),
+                    intent.getStringExtra("cover"),
                     intent.getLongExtra("position", 0), intent.getLongExtra("duration", -1),
                     intent.getBooleanExtra("playing", false));
         } else if (ACTION_PREVIOUS.equals(action)) {
@@ -134,11 +139,16 @@ public class PlaybackService extends Service {
     }
 
     /** New song, play/pause or a seek. */
-    void update(String title, String artist, String album, long positionMs, long durationMs, boolean playing) {
+    void update(String title, String artist, String album, String cover, long positionMs, long durationMs, boolean playing) {
         this.playing = playing;
         if (title == null) title = "";
         if (artist == null) artist = "";
         if (album == null) album = "";
+        if (cover == null) cover = "";
+        if (!cover.equals(coverPath)) {
+            coverPath = cover;
+            coverBitmap = loadCover(cover);
+        }
 
         MediaMetadata.Builder metadata = new MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_TITLE, title)
@@ -146,6 +156,9 @@ public class PlaybackService extends Service {
                 .putString(MediaMetadata.METADATA_KEY_ALBUM, album);
         if (durationMs > 0) {
             metadata.putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs);
+        }
+        if (coverBitmap != null) {
+            metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, coverBitmap);
         }
         session.setMetadata(metadata.build());
 
@@ -162,6 +175,7 @@ public class PlaybackService extends Service {
 
         Notification notification = new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_media_play)
+                .setLargeIcon(coverBitmap)
                 .setContentTitle(title)
                 .setContentText(artist)
                 .setContentIntent(openApp())
@@ -212,6 +226,28 @@ public class PlaybackService extends Service {
             if (wakeLock.isHeld()) {
                 wakeLock.release();
             }
+        }
+    }
+
+    /** The album cover for the notification and the lock screen, at most about 640 px. */
+    private static Bitmap loadCover(String path) {
+        if (path.isEmpty()) {
+            return null;
+        }
+        try {
+            BitmapFactory.Options size = new BitmapFactory.Options();
+            size.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(path, size);
+            int largest = Math.max(size.outWidth, size.outHeight);
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inSampleSize = 1;
+            while (largest / options.inSampleSize > 1280) {
+                options.inSampleSize *= 2;
+            }
+            return BitmapFactory.decodeFile(path, options);
+        } catch (Throwable e) {
+            Log.w(MainActivity.TAG, "cannot read the cover " + path + ": " + e);
+            return null;
         }
     }
 

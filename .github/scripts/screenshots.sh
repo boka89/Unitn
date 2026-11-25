@@ -24,7 +24,7 @@ make_album() { # artist album year color tracks...
       -filter_complex "[0:a][1:a]amix=inputs=2:normalize=0[a]" \
       -map "[a]" -map 2:v -c:a libmp3lame -q:a 6 -c:v copy -id3v2_version 3 \
       -metadata title="$title" -metadata artist="$artist" -metadata album="$album" \
-      -metadata date="$year" -metadata track="$n" -disposition:v attached_pic "$dir/$(printf %02d $n) $title.mp3"
+      -metadata genre="Ambient" -metadata date="$year" -metadata track="$n" -disposition:v attached_pic "$dir/$(printf %02d $n) $title.mp3"
     n=$((n + 1))
   done
 }
@@ -82,23 +82,26 @@ run_theme() { # theme-number name
   fi
   local pid=$!
   if [ "$2" = dark ]; then
-    for _ in $(seq 50); do
-      WID=$(xdotool search --name Unitn | head -1 || true)
-      [ -n "$WID" ] && break
-      sleep 0.1
-    done
-    xdotool windowmove "$WID" 0 0 windowsize "$WID" 1280 820 || true
-    sleep 1.4; shot "$2-intro-1"
+    # The animation has its own fixed-size window, centred on the screen.
+    sleep 1.5; shot "$2-intro-1"
     sleep 1.6; shot "$2-intro-2"
     sleep 1.8; shot "$2-intro-3"
     sleep 4
   else
     sleep 8
   fi
-  WID=$(xdotool search --name Unitn | head -1)
+  WID=$(xdotool search --onlyvisible --name Unitn | head -1)
   xdotool windowmove "$WID" 0 0 windowsize "$WID" 1280 820
   sleep 2
   shot "$2-albums"
+  if [ "$2" = dark ]; then
+    click 870 34 1         # Sort: … menu in the header
+    shot "$2-sort-menu"
+    click 1000 650 1       # close it (empty space)
+  fi
+  click 120 160 3          # Artists: grid of artist pictures
+  shot "$2-artists"
+  click 120 117 2          # back to Albums
   click 341 160            # first album card
   shot "$2-album"
   if [ "$2" = dark ]; then
@@ -116,7 +119,15 @@ run_theme() { # theme-number name
   shot "$2-playing"
   click 120 117 2          # Albums: the playing album is marked
   shot "$2-albums-playing"
-  click 120 411 3          # Now Playing (visualizer)
+  xdotool windowfocus "$WID" 2>/dev/null || true
+  xdotool key ctrl+shift+m; sleep 2   # mini player
+  shot "$2-mini"
+  click 241 64 2                      # mini player: lyrics row on
+  shot "$2-mini-lyrics"
+  click 241 64 1                      # and off again
+  xdotool key ctrl+shift+m; sleep 2   # and back to the full window
+  shot "$2-after-mini"
+  click 45 776 3           # Now Playing (visualizer): the cover on the player bar
   shot "$2-nowplaying"
   xdotool mousemove 900 480; sleep 0.8   # mouse over the visualizer: its buttons appear
   shot "$2-nowplaying-controls"
@@ -150,14 +161,18 @@ run_theme() { # theme-number name
   click 1070 92 3          # Lyrics button (synced .lrc next to the song)
   shot "$2-lyrics"
   click 1070 92 1          # back to the visualizer
-  click 120 285 6          # Radio (wait for stations)
+  click 120 326 6          # Radio (wait for stations)
   shot "$2-radio"
   if [ "$2" = dark ]; then
-    click 700 168 10       # play first station
+    click 306 137 6        # Country: the list of countries
+    shot "$2-radio-countries"
+    click 400 275 6        # the country with the most stations
+    shot "$2-radio-country"
+    click 700 210 10       # play first station
     shot "$2-radio-playing"
-    click 120 411 3
+    click 45 776 3         # Now Playing: the cover on the player bar
     shot "$2-nowplaying-radio"
-    click 120 327 2        # Podcasts
+    click 120 368 2        # Podcasts
     shot "$2-podcasts-empty"
     click 1110 42 1        # search box
     xdotool type --delay 60 "NASA"; sleep 8
@@ -171,27 +186,29 @@ run_theme() { # theme-number name
     shot "$2-podcast-show"
     click 600 250 12       # play the newest episode
     shot "$2-podcast-playing"
-    click 120 411 3
+    click 45 776 3         # Now Playing: the cover on the player bar
     shot "$2-nowplaying-podcast"
     sleep 14                 # progress is saved every 15 s
-    click 120 327 2          # back to the show: progress bar and "… left"
+    click 120 368 2          # back to the show: progress bar and "… left"
     shot "$2-podcast-progress"
-    click 120 486 1          # somewhere else (the server), then play the episode again
-    click 120 327 2
+    click 120 527 1          # somewhere else (the server), then play the episode again
+    click 120 368 2
     click 600 250 10         # same episode: continues where it was
     shot "$2-podcast-resume"
   fi
   click 120 201            # Songs
   shot "$2-songs"
+  click 120 242 2          # Statistics
+  shot "$2-statistics"
   click 200 697            # Settings (gear next to the theme switch)
   shot "$2-settings"
   if [ -f /tmp/jellyfin.json ]; then
-    click 120 486 6        # the Jellyfin server in the sidebar
+    click 120 527 6        # the Jellyfin server in the sidebar
     shot "$2-server"
     click 341 206 4        # first album on the server
     shot "$2-server-album"
     click 524 257 4        # play it
-    click 120 486 3        # back to the server: the album is marked
+    click 120 527 3        # back to the server: the album is marked
     shot "$2-server-playing"
   fi
   if [ "$2" = dark ]; then
