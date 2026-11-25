@@ -906,7 +906,9 @@ export component SongsPage inherits Rectangle {
                 item: song;
                 striped: Math.mod(i, 2) == 1;
                 current: song.key == root.current-key;
-                gestures: true;
+                // Android: long press picks, swipes queue. The desktop drags
+                // songs onto playlists and the queue instead.
+                gestures: Theme.mobile;
                 picking: root.selection-count > 0;
                 drag-what: "song:1:" + i;
                 activated => { root.play-song(i); }
@@ -1788,7 +1790,8 @@ export component NowPlayingPage inherits Rectangle {
                 primary: !root.covered;
             }
             // The buttons appear when the mouse moves over the card and fade
-            // out when it stops. A double tap likes or unlikes the song.
+            // out when it stops. Android: a double tap likes or unlikes the
+            // song (on the desktop, clicks on the visualizer do nothing).
             card-tap-timer := Timer {
                 interval: 300ms;
                 running: false;
@@ -1796,6 +1799,7 @@ export component NowPlayingPage inherits Rectangle {
             }
             card-idle := IdleArea {
                 clicked => {
+                    if (!Theme.mobile) { return; }
                     if (card-tap-timer.running) {
                         card-tap-timer.running = false;
                         if (root.can-like) { root.toggle-like(); }

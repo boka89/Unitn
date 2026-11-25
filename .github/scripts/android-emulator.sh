@@ -152,7 +152,7 @@ check "Now Playing: swipe left = next" logged "player: next song (asked)"
 adb shell input swipe 540 900 540 1600 250; sleep 3; shot phone-np-swiped-down
 tap 184 $CHIP_Y 3                                             # back to Song
 tap 405 $TAB_Y 8; shot phone-radio                            # Radio
-tap 584 252 1; tap 775 252 1; tap 938 252 8                  # filters: Hungary + Pop + Rock at once
+tap 584 252 1; tap 775 252 1; tap 938 252 8                  # filters: Pop + Rock + Jazz at once
 shot phone-radio-filters
 # Browse by country (second row of buttons on a phone): the list, then a
 # tap outside closes it.

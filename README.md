@@ -1,7 +1,7 @@
 # Unitn player
 
 **Unitn player** (say "unitone player") is a free, open-source music player for
-**Windows, macOS and Linux**, written in Rust. Think "VLC for music", with a
+**Windows, macOS and Linux** (and, experimentally, **Android**), written in Rust. Think "VLC for music", with a
 modern UI: your local music library, your **Jellyfin, Plex and Navidrome** servers,
 thousands of internet radio stations and your **podcasts**, in one fast app with no ads,
 no account and no tracking.
@@ -38,9 +38,10 @@ no account and no tracking.
   artist or album folder if you have one, otherwise a photo from Wikimedia Commons
 - **Fix album info**: search MusicBrainz by hand, pick the right album and cover (or use your
   own image) and correct artist/album names. Your music files are never modified
-- **Music servers**: Jellyfin, Plex, Navidrome and other OpenSubsonic servers. Browse your
-  server's albums (with covers) and play them like local music — seeking and gapless included.
-  Search finds songs on your servers too, and server songs can go into playlists.
+- **Music servers**: Jellyfin, Plex, Navidrome and other OpenSubsonic servers. Their albums and
+  songs appear in your Albums, Artists and Songs views next to your own music (labelled with the
+  server), or browse a server on its own page; they play like local music, seeking and gapless
+  included. Search finds songs on your servers too, and server songs can go into playlists.
   See [Music servers](#music-servers)
 - **Podcasts**: search Apple's public podcast directory or paste any RSS link, subscribe, and
   play episodes. Unitn remembers where you stopped in each episode and shows what's new
@@ -69,8 +70,8 @@ no account and no tracking.
 - **Volume** with a mute button (click the speaker, or press M) and mouse-wheel control over the
   volume bar
 - **Mini player**: a small window with the cover, song, play controls, like, seek bar, volume and
-  optionally a line of synced lyrics; it remembers where you put it
-  that stays on top of other windows (can be unpinned). Open it with the button on the player
+  optionally a line of synced lyrics, that stays on top of other windows (can be unpinned) and
+  remembers where you put it. Open it with the button on the player
   bar or ⌘/Ctrl+Shift+M; the expand button or a double-click on the cover brings the full window back
 - **Keyboard shortcuts** (Space, ←/→ seek, ⌘/Ctrl+←/→ track, ↑/↓ volume, M mute, ⌘/Ctrl+F search,
   ⌘/Ctrl+Shift+M mini player …)
@@ -86,6 +87,11 @@ Get the latest installers from the **[Releases page](https://github.com/boka89/U
 - **Windows**: `…_x64-setup.exe` installer, or the portable `.zip`
 - **macOS**: `…_aarch64.dmg` (Apple Silicon) or `…_x64.dmg` (Intel)
 - **Linux**: `.deb` (Debian/Ubuntu), `.AppImage` (any distro) or portable `.tar.gz`
+- **Android** (experimental, 8.0 or newer): `…_android.apk`. Open it on the phone and allow
+  installing apps from your browser or file manager. It has a phone layout with tabs, plays on in
+  the background with lock-screen and headset controls, and finds the music in the phone's Music
+  and Download folders. It has been tested in the Android emulator only so far; please report
+  what you find on a real phone in [Issues](https://github.com/boka89/Unitn/issues).
 
 The builds are not signed with paid certificates yet. On macOS, open the app the first time with
 right-click → Open (or System Settings → Privacy & Security → "Open Anyway").
@@ -98,8 +104,8 @@ OpenSubsonic / Subsonic server, such as Gonic or Airsonic). Open
 
 | | Jellyfin | Plex | Navidrome / Subsonic |
 |---|---|---|---|
-| Address | `192.168.1.10` (port 8096 is assumed) or the full URL, e.g. `https://music.example.com` | optional: leave it empty and Unitn finds your server, or type `192.168.1.10` (port 32400 is assumed) or the full URL | `192.168.1.10` (port 4533 is assumed) or the full URL |
-| Sign in | your Jellyfin user name and password | click **Sign in with Plex**: plex.tv opens in your browser, you sign in there (two-factor sign-in works), and Unitn picks up the access token. If no browser opens, go to [plex.tv/link](https://plex.tv/link) and enter the code Unitn shows | your user name and password |
+| Address | `192.168.1.10` (port 8096 is assumed) or the full URL, e.g. `https://music.example.com` | optional: pick a server Unitn found on your network, leave it empty and Unitn finds your server after you sign in, or type `192.168.1.10` (port 32400 is assumed) or the full URL | `192.168.1.10` (port 4533 is assumed) or the full URL |
+| Sign in | your Jellyfin user name and password | if your Plex server allows your network without signing in, Unitn connects right away; otherwise click **Sign in with Plex**: plex.tv opens in your browser, you sign in there (two-factor sign-in works), and Unitn picks up the access token. If no browser opens, go to [plex.tv/link](https://plex.tv/link) and enter the code Unitn shows | your user name and password |
 
 The server then appears under **SERVERS** in the sidebar. Its albums open in the normal album
 view; play, shuffle, queue and "play next" work as for local music. The search box at the top

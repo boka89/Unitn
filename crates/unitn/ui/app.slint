@@ -2863,10 +2863,12 @@ export component AppWindow inherits Window {
                 return reject;
             }
             // Buttons, hints and the mouse pointer show while the mouse moves
-            // and fade out when it stops. Tap: play/stop; double tap: like.
+            // and fade out when it stops. Android: tap plays/stops, double
+            // tap likes (on the desktop, clicks on the visualizer do nothing).
             full-idle := IdleArea {
                 hide-cursor: true;
                 clicked => {
+                    if (!Theme.mobile) { return; }
                     if (tap-timer.running) {
                         tap-timer.running = false;
                         if (root.np-can-like) {

@@ -146,9 +146,49 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # The Android app (experimental), signed with the permanent key so it
+  # installs over earlier versions. Tested in the emulator by android.yml on
+  # every push.
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: crates/unitn-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build APK
+        env:
+          KEYSTORE_B64: ${{ secrets.UNITN_ANDROID_KEYSTORE_B64 }}
+          UNITN_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.UNITN_ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::The permanent signing key (repository secrets) is missing"; exit 1
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/unitn-release.p12"
+          export UNITN_ANDROID_KEYSTORE="$RUNNER_TEMP/unitn-release.p12"
+          .github/scripts/android-build.sh
+          mkdir -p dist-android
+          cp dist/android/Unitn_*_android.apk dist-android/
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: installers-Android
+          path: dist-android/*
+          if-no-files-found: error
+
   publish:
     name: Publish release
-    needs: [meta, package]
+    needs: [meta, package, android]
     # Publish what was built even if one platform failed (e.g. Ubuntu's
     # mirrors were down); re-running the failed job adds its files later.
     if: ${{ !cancelled() && needs.meta.outputs.tag != '' }}
@@ -179,6 +219,7 @@ jobs:
             | **macOS** Intel | `Unitn_*_x64.dmg` |
             | **Linux** Debian/Ubuntu | `unitn_*_amd64.deb` |
             | **Linux** any distro | `unitn_*_x86_64.AppImage` or `Unitn_*_linux_x64_portable.tar.gz` |
+            | **Android** 8.0+ (experimental) | `Unitn_*_android.apk`: open it on the phone and allow installing apps from your browser or file manager |
 
             > The builds are not signed with paid certificates yet. **macOS**: the first time, right-click
             > Unitn → Open (or System Settings → Privacy & Security → "Open Anyway"). If macOS says the

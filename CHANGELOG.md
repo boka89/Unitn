@@ -2,6 +2,34 @@
 
 Older versions: see the [changelog on the website](https://unitn.bokors.net/changelog/).
 
+## 0.7.1 — 2026-11-25
+
+One version for the desktop and Android: the Android app (still experimental) now has
+everything up to 0.7.0, and the desktop gets the server library and the Plex improvements made
+for Android.
+
+### New
+
+- **Your servers' music in the library**: the albums and songs of your Jellyfin, Plex and
+  Navidrome servers are saved and appear in Albums, Artists and Songs next to your own music
+  (a small label on the cover says which server). The search box finds them without asking the
+  servers each time, and their covers load as you scroll.
+- **Plex**: the Add server dialog lists the Plex servers it finds on your home network. With an
+  address, Unitn first tries to connect without signing in (works when your Plex server allows
+  your network). `*.plex.direct` addresses work even where the router blocks their DNS, an error
+  names the server that can't be reached, and the browser sign-in keeps waiting through short
+  network drops.
+- **Android (experimental)**, now the same version as the desktop: sorting, the Artists grid,
+  Statistics (Settings → Statistics), radio browsing by country, language, tag, format and
+  bitrate, "Continue where I left off", reordering playlist songs (song menu → Move to top /
+  bottom), the album's genre, the lower memory use of 0.6.6–0.6.7, and the album cover in the
+  notification and on the lock screen.
+
+### Not on Android
+
+The mini player, drag and drop, keyboard shortcuts, window transparency, and saving lyrics into
+files or songs (Android apps can't change music files; lyrics found online still show).
+
 ## 0.7.0 — 2026-11-25
 
 Four new features requested by **@jo-el414** (#33–#36). Thanks!

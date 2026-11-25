@@ -92,12 +92,12 @@ jobs:
           name: android-screenshots
           path: android-screenshots/
 
-      # Experimental public download: a pre-release (never "Latest", so the
-      # desktop downloads on the website are unaffected) with the APK signed
-      # with the permanent key. Only from android-spike, and only when the
-      # emulator run above passed.
+      # The website's Android download: a pre-release (never "Latest", so the
+      # desktop downloads are unaffected) with the APK signed with the
+      # permanent key, kept up to date from main whenever the emulator run
+      # above passed. (Releases attach the APK too, see release.yml.)
       - name: Publish the experimental APK (pre-release "android-preview")
-        if: github.event_name == 'push' && github.ref_name == 'android-spike' && success()
+        if: github.event_name == 'push' && github.ref_name == 'main' && success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HAS_KEY: ${{ secrets.UNITN_ANDROID_KEYSTORE_B64 != '' }}
@@ -129,7 +129,7 @@ jobs:
 
           Certificate SHA-256: \`$(grep -m1 -i 'SHA-256 digest:' "$RUNNER_TEMP/certs.txt" 2>/dev/null | sed 's/.*: *//' || true)\`
 
-          Built from \`${GITHUB_SHA::7}\` on the \`android-spike\` branch.
+          Built from \`${GITHUB_SHA::7}\` on \`main\`, the same code as the desktop version.
           EOF
           sed -i 's/^          //' "$RUNNER_TEMP/notes.md"
           gh release delete android-preview --cleanup-tag --yes 2>/dev/null || true
