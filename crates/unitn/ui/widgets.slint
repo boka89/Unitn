@@ -38,6 +38,17 @@ export struct ArtistItem {
     /// of their album covers.
     image: image,
     has-image: bool,
+    /// The picture is still loading: show a plain circle, not the initial.
+    pending: bool,
+}
+
+/// A row of the search suggestions under the search box. `kind`: -1 a
+/// section title, 0 an artist, 1 an album, 2 a song, 3 "Show all results".
+export struct SearchHit {
+    kind: int,
+    index: int,
+    title: string,
+    subtitle: string,
 }
 
 export struct StationItem {
@@ -370,6 +381,8 @@ export component SearchBox inherits Rectangle {
     in property <string> placeholder: "Search";
     in-out property <string> text <=> input.text;
     callback edited(string);
+    /// Enter pressed (the keyboard then goes back to the app).
+    callback accepted();
     /// Escape pressed: give the keyboard back to the app.
     callback escaped();
 
@@ -427,7 +440,10 @@ export component SearchBox inherits Rectangle {
                     single-line: true;
                     selection-background-color: Theme.accent-soft;
                     edited => { root.edited(self.text); }
-                    accepted => { root.escaped(); }
+                    accepted => {
+                        root.accepted();
+                        root.escaped();
+                    }
                 }
             }
         }

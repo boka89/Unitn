@@ -746,8 +746,11 @@ component ArtistCard inherits Rectangle {
             height: root.art;
             border-radius: root.art / 2;
             clip: true;
-            background: @linear-gradient(135deg, Theme.accent 0%, #d061ff 100%);
-            if !root.item.has-image: Text {
+            // Plain while the picture loads, so it doesn't flash purple first.
+            background: root.item.pending || root.item.has-image
+                ? Theme.surface
+                : @linear-gradient(135deg, Theme.accent 0%, #d061ff 100%);
+            if !root.item.has-image && !root.item.pending: Text {
                 width: parent.width;
                 height: parent.height;
                 text: root.item.initial;
@@ -762,6 +765,10 @@ component ArtistCard inherits Rectangle {
                 height: parent.height;
                 source: root.item.image;
                 image-fit: cover;
+                // Fade in instead of popping up.
+                opacity: 0;
+                init => { self.opacity = 1; }
+                animate opacity { duration: 180ms; easing: ease-out; }
             }
             // A thin ring, and a lighter one on hover.
             Rectangle {
@@ -2942,12 +2949,17 @@ component TopList inherits Rectangle {
         }
         for row[i] in root.rows: Rectangle {
             height: 34px;
-            // The bar: this row's plays against the most played.
+            // Every row has the same full-width background; a thin bar along
+            // its bottom shows its plays against the most played.
+            border-radius: 6px;
+            clip: true;
+            background: Theme.accent-soft;
             Rectangle {
                 x: 0px;
+                y: parent.height - self.height;
+                height: 3px;
                 width: Math.max(6px, parent.width * row.share);
-                border-radius: 6px;
-                background: Theme.accent-soft;
+                background: Theme.accent;
             }
             HorizontalLayout {
                 padding-left: 8px;

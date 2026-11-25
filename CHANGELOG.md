@@ -2,6 +2,20 @@
 
 Older versions: see the [changelog on the website](https://unitn.bokors.net/changelog/).
 
+## 0.7.2 — 2026-11-25
+
+Fixes and a better search, from **@jo-el414**'s testing of 0.7.0/0.7.1 (#40–#42). Thanks!
+
+- **Search suggestions** (#42): on the desktop, typing in the search box no longer jumps to the
+  Songs page. A list opens under the box with matching artists, albums and songs: click an
+  artist to see their albums, an album to open it, or a song to play it. "Show all songs" (or
+  Enter) shows every matching song on the Songs page as before. The page you're on is still
+  filtered while you type.
+- **Artists page** (#41): while artist pictures load, the circles stay plain instead of
+  flashing purple with the artist's initial, and the pictures fade in.
+- **Statistics** (#40): every row of the top lists has the same full-width background; a thin
+  bar along the bottom shows how its plays compare with the most played.
+
 ## 0.7.1 — 2026-11-25
 
 One version for the desktop and Android: the Android app (still experimental) now has

@@ -26,7 +26,7 @@ use unitn_core::util::format_time;
 use crate::media::{Media, MediaCmd};
 use crate::settings::{Paths, Settings};
 use crate::{
-    AlbumItem, AppWindow, ArtistItem, DayBar, Dnd, EpisodeItem, FixCandidate, PlaylistItem, PodcastItem, QueueEntry, ServerItem,
+    AlbumItem, AppWindow, ArtistItem, DayBar, SearchHit, Dnd, EpisodeItem, FixCandidate, PlaylistItem, PodcastItem, QueueEntry, ServerItem,
     StatRow, StatTile, StationItem, Theme, TrackItem, VizInfo,
 };
 
@@ -1516,6 +1516,7 @@ impl App {
                         if let Some(mut row) = artists.row_data(i).filter(|r| r.has_image) {
                             row.image = Image::default();
                             row.has_image = false;
+                            row.pending = true;
                             artists.set_row_data(i, row);
                         }
                     }
@@ -1586,6 +1587,7 @@ impl App {
     /// Puts covers from the cover thread into the album grid and album page.
     fn on_thumbs(&mut self, done: Vec<(PathBuf, Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>)>) {
         let mut ready: HashSet<PathBuf> = HashSet::new();
+        let mut failed: HashSet<PathBuf> = HashSet::new();
         // Pictures that scrolled away (or whose page was left) meanwhile are dropped.
         let wanted: HashSet<PathBuf> = self.wanted_thumbs().into_iter().collect();
         for (path, pixels) in done {
@@ -1596,10 +1598,12 @@ impl App {
             let img = pixels.map(Image::from_rgba8);
             if img.is_some() {
                 ready.insert(path.clone());
+            } else {
+                failed.insert(path.clone());
             }
             self.thumbs.insert(path, img);
         }
-        if ready.is_empty() {
+        if ready.is_empty() && failed.is_empty() {
             return;
         }
         let Some(ui) = self.ui() else { return };
@@ -1614,10 +1618,22 @@ impl App {
         }
         let artists = ui.get_artists();
         for i in 0..if self.artist_pictures { self.artists.len() } else { 0 } {
-            let Some(path) = self.artist_picture(&self.artists[i]).filter(|p| ready.contains(p)) else { continue };
+            let Some(path) = self.artist_picture(&self.artists[i]) else { continue };
+            if failed.contains(&path) {
+                // No picture after all: show the initial.
+                if let Some(mut row) = artists.row_data(i).filter(|r| r.pending) {
+                    row.pending = false;
+                    artists.set_row_data(i, row);
+                }
+                continue;
+            }
+            if !ready.contains(&path) {
+                continue;
+            }
             if let (Some(mut row), Some(Some(img))) = (artists.row_data(i), self.thumbs.get(&path)) {
                 row.image = img.clone();
                 row.has_image = true;
+                row.pending = false;
                 artists.set_row_data(i, row);
             }
         }
@@ -2125,6 +2141,7 @@ impl App {
         if let Some(ui) = self.ui() {
             ui.set_library_query(self.query.as_str().into());
         }
+        self.update_search_hits();
         // Also search the connected music servers; their songs are added
         // below the local ones when they arrive.
         let request = self.search_request.fetch_add(1, Ordering::SeqCst) + 1;
@@ -2180,7 +2197,10 @@ impl App {
     }
 
     fn artist_item(&mut self, a: &Artist) -> ArtistItem {
-        let (image, has_image) = self.thumb(&self.artist_picture(a));
+        let picture = self.artist_picture(a);
+        let (image, has_image) = self.thumb(&picture);
+        // Has a picture that isn't decoded yet (and didn't fail before).
+        let pending = !has_image && picture.as_ref().is_some_and(|p| !matches!(self.thumbs.get(p), Some(None)));
         ArtistItem {
             name: a.name.as_str().into(),
             info: format!(
@@ -2192,6 +2212,7 @@ impl App {
             initial: initial(&a.name),
             image,
             has_image,
+            pending,
         }
     }
 
@@ -2397,6 +2418,110 @@ impl App {
         self.songs.extend(tracks.into_iter().filter(|t| !known.contains(&t.path)));
         self.sort_songs();
         self.show_songs();
+        self.update_search_hits();
+    }
+
+    /// The suggestions under the search box: a few artists, albums and songs
+    /// matching the search (names that match first), and "Show all".
+    fn update_search_hits(&mut self) {
+        const ARTISTS: usize = 3;
+        const ALBUMS: usize = 4;
+        const SONGS: usize = 5;
+        let mut hits: Vec<SearchHit> = Vec::new();
+        let q = self.query.to_lowercase();
+        if !q.is_empty() {
+            let header = |title: &str| SearchHit { kind: -1, index: -1, title: title.into(), subtitle: "".into() };
+            // Indexes whose own name matches come first, then the rest
+            // (e.g. songs found by their album or artist).
+            let pick = |names: Vec<String>, max: usize| -> Vec<usize> {
+                let (mut first, rest): (Vec<usize>, Vec<usize>) =
+                    (0..names.len()).partition(|&i| names[i].to_lowercase().contains(q.as_str()));
+                first.extend(rest);
+                first.truncate(max);
+                first
+            };
+            let artists = pick(self.artists.iter().map(|a| a.name.clone()).collect(), ARTISTS);
+            if !artists.is_empty() {
+                hits.push(header("ARTISTS"));
+                for i in artists {
+                    let a = &self.artists[i];
+                    hits.push(SearchHit {
+                        kind: 0,
+                        index: i as i32,
+                        title: a.name.as_str().into(),
+                        subtitle: plural(a.album_count as usize, "album", "albums").into(),
+                    });
+                }
+            }
+            let albums = pick(self.albums.iter().map(|a| a.title.clone()).collect(), ALBUMS);
+            if !albums.is_empty() {
+                hits.push(header("ALBUMS"));
+                for i in albums {
+                    let a = &self.albums[i];
+                    // The same album can be on the computer and on a server.
+                    let badge = self.album_origins.get(i).map(|o| self.source_badge(o)).unwrap_or_default();
+                    let subtitle = if badge.is_empty() { a.artist.clone() } else { format!("{} · {badge}", a.artist) };
+                    hits.push(SearchHit { kind: 1, index: i as i32, title: a.title.as_str().into(), subtitle: subtitle.into() });
+                }
+            }
+            let songs = pick(self.songs.iter().map(|t| t.title.clone()).collect(), SONGS);
+            if !songs.is_empty() {
+                hits.push(header("SONGS"));
+                for i in songs {
+                    let t = &self.songs[i];
+                    let mut subtitle = if t.album.is_empty() { t.artist.clone() } else { format!("{} — {}", t.artist, t.album) };
+                    if t.is_remote() && !matches!(self.music_source, MusicSource::Server(_)) {
+                        if let Some(cfg) = self.settings.servers.iter().find(|c| servers::owns_track(c, &t.path)) {
+                            subtitle = format!("{subtitle} · {}", cfg.kind.label());
+                        }
+                    }
+                    hits.push(SearchHit { kind: 2, index: i as i32, title: t.title.as_str().into(), subtitle: subtitle.into() });
+                }
+                hits.push(SearchHit {
+                    kind: 3,
+                    index: -1,
+                    title: format!("Show all {}", plural(self.songs.len(), "song", "songs")).into(),
+                    subtitle: "".into(),
+                });
+            }
+        }
+        if let Some(ui) = self.ui() {
+            ui.set_search_hits(model(hits));
+        }
+    }
+
+    /// A search suggestion was clicked: open the artist or album, or play
+    /// the song (with the other matching songs after it), and clear the
+    /// search. "Show all" keeps the search and shows the Songs page.
+    pub fn search_pick(&mut self, kind: i32, index: usize) {
+        match kind {
+            0 => {
+                let Some(name) = self.artists.get(index).map(|a| a.name.clone()) else { return };
+                self.clear_search();
+                self.artist_filter = Some(name);
+                self.reload_library();
+            }
+            1 => {
+                self.open_album(index);
+                self.clear_search();
+            }
+            2 => {
+                self.play_song(index);
+                self.clear_search();
+            }
+            _ => {}
+        }
+    }
+
+    fn clear_search(&mut self) {
+        self.query.clear();
+        // Server searches still under way are no longer wanted.
+        self.search_request.fetch_add(1, Ordering::SeqCst);
+        self.reload_library();
+        if let Some(ui) = self.ui() {
+            ui.set_library_query("".into());
+            ui.set_search_hits(model(Vec::new()));
+        }
     }
 
     pub fn open_album(&mut self, index: usize) {
@@ -5499,6 +5624,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
 
     on!(on_open_album, |a, i| a.open_album(i.max(0) as usize));
     on!(on_open_artist, |a, i| a.open_artist(i.max(0) as usize));
+    on!(on_search_pick, |a, kind, i| a.search_pick(kind, i.max(0) as usize));
     on!(on_show_all_albums, |a| a.show_all_albums());
     on!(on_play_album, |a, shuffle| a.play_album(shuffle));
     on!(on_play_album_track, |a, i| a.play_album_track(i.max(0) as usize));
