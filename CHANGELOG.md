@@ -2,6 +2,16 @@
 
 Older versions: see the [changelog on the website](https://unitn.bokors.net/changelog/).
 
+## 0.7.3 — 2026-11-25
+
+A real artist page, from **@jo-el414**'s ideas (#43). Thanks!
+
+- **Artist page**: opening an artist now shows a header like an album's: the artist's picture as
+  a square (so the whole photo shows), their name, how many albums and songs, and **Play** and
+  **Shuffle** buttons for all their songs. Their albums are below.
+- **Fixed**: the back arrow (and Escape) on an artist's page went to all albums; it now goes
+  back to the Artists page. The sidebar highlights Artists while an artist's page is open.
+
 ## 0.7.2 — 2026-11-25
 
 Fixes and a better search, from **@jo-el414**'s testing of 0.7.0/0.7.1 (#40–#42). Thanks!

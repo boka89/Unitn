@@ -193,6 +193,17 @@ export component AppWindow inherits Window {
     property <bool> sort-desc: root.page == 0 ? root.album-sort-desc
         : root.page == 1 ? root.artist-sort-desc : root.song-sort-desc;
     in property <bool> albums-filtered: false;
+    // The artist page (Albums filtered to one artist): its header.
+    in property <string> artist-name;
+    in property <string> artist-info;
+    in property <image> artist-image;
+    in property <bool> artist-has-image;
+    callback play-artist(bool);
+    /// Back from an artist's page: to the Artists grid.
+    function artist-back() {
+        root.show-all-albums();
+        root.page = 1;
+    }
     in property <AlbumItem> album;
     /// Key of the album the playing song belongs to ("" for none).
     in property <string> playing-album;
@@ -526,7 +537,7 @@ export component AppWindow inherits Window {
         if (root.search-open) { root.search-open = false; keys.focus(); return true; }
         if (root.page == 5) { root.page = root.album-from-server-page ? 9 : 0; return true; }
         if (root.page == 10 && root.podcast-view == 1) { root.podcast-back(); return true; }
-        if (root.page == 0 && root.albums-filtered) { root.show-all-albums(); return true; }
+        if (root.page == 0 && root.albums-filtered) { root.artist-back(); return true; }
         if (!root.phone) {
             if (root.page == 0) { return false; }
             root.page = 0;
@@ -649,7 +660,7 @@ export component AppWindow inherits Window {
                         NavItem {
                             icon: @image-url("icons/album.svg");
                             label: "Albums";
-                            selected: root.page == 0 || (root.page == 5 && !root.album-from-server-page);
+                            selected: (root.page == 0 && !root.albums-filtered) || (root.page == 5 && !root.album-from-server-page);
                             clicked => {
                                 if (root.albums-filtered) { root.show-all-albums(); }
                                 root.page = 0;
@@ -658,8 +669,11 @@ export component AppWindow inherits Window {
                         NavItem {
                             icon: @image-url("icons/artist.svg");
                             label: "Artists";
-                            selected: root.page == 1;
-                            clicked => { root.page = 1; }
+                            selected: root.page == 1 || (root.page == 0 && root.albums-filtered);
+                            clicked => {
+                                if (root.albums-filtered) { root.show-all-albums(); }
+                                root.page = 1;
+                            }
                         }
                         NavItem {
                             icon: @image-url("icons/song.svg");
@@ -849,7 +863,7 @@ export component AppWindow inherits Window {
                                     if (root.page == 5) {
                                         root.page = root.album-from-server-page ? 9 : 0;
                                     } else {
-                                        root.show-all-albums();
+                                        root.artist-back();
                                     }
                                 }
                             }
@@ -858,6 +872,7 @@ export component AppWindow inherits Window {
                             horizontal-stretch: 1;
                             min-width: 0px;
                             text: root.phone && root.page == 0 && !root.albums-filtered ? "Music"
+                                : root.page == 0 && root.albums-filtered ? "Artist"
                                 : root.page == 0 ? root.albums-title
                                 : root.phone && (root.page == 1 || root.page == 2) ? "Music"
                                 : root.music-chips && root.page != 8 ? "Music"
@@ -1312,6 +1327,12 @@ export component AppWindow inherits Window {
                             }
                             add-folder => { root.add-folder(); }
                             covers-visible(first, last) => { root.albums-visible(first, last); }
+                            artist-mode: root.albums-filtered;
+                            artist-name: root.artist-name;
+                            artist-info: root.artist-info;
+                            artist-image: root.artist-image;
+                            artist-has-image: root.artist-has-image;
+                            play-artist(shuffled) => { root.play-artist(shuffled); }
                         }
                         if root.page == 9: ServerPage {
                             width: parent.width;
