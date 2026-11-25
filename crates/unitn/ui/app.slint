@@ -5,11 +5,10 @@ import { Theme } from "theme.slint";
 import {
     AlbumItem, TrackItem, ArtistItem, StationItem, QueueEntry, PlaylistItem, MenuRow, FixCandidate, ServerItem, Chip,
     PodcastItem, EpisodeItem,
-    IconButton, PillButton, NavItem, Dnd, DropTarget, SeekBar, SearchBox, Artwork, Spectrum, Visualizer, VizInfo, TextField, VizControls, BrandMark, IdleArea,
-} from "widgets.slint";
+    IconButton, PillButton, NavItem, Dnd, DropTarget, SeekBar, SearchBox, Artwork, Spectrum, Visualizer, VizInfo, TextField, VizControls, BrandMark, IdleArea, SearchHit } from "widgets.slint";
 import { AlbumsPage, AlbumDetailPage, ArtistsPage, SongsPage, RadioPage, QueuePage, NowPlayingPage, SettingsPage, PlaylistPage, ServerPage, PodcastsPage, StatisticsPage, StatTile, StatRow, DayBar } from "pages.slint";
 
-export { StatTile, StatRow, DayBar }
+export { StatTile, StatRow, DayBar, SearchHit }
 export { Theme, Dnd, VizInfo, AlbumItem, TrackItem, ArtistItem, StationItem, QueueEntry, PlaylistItem, FixCandidate, ServerItem, PodcastItem, EpisodeItem }
 
 component ThemeSwitch inherits Rectangle {
@@ -385,6 +384,10 @@ export component AppWindow inherits Window {
     callback play-album-track(int);
     callback play-song(int);
     callback library-search(string);
+    /// Desktop: suggestions under the search box while typing.
+    in property <[SearchHit]> search-hits;
+    property <bool> search-dropdown: false;
+    callback search-pick(int, int);
     callback add-folder();
     callback rescan();
     // Radio
@@ -1043,10 +1046,24 @@ export component AppWindow inherits Window {
                                         root.podcast-search(text);
                                     } else {
                                         root.library-search(text);
-                                        if (text != "") { root.page = 2; }
+                                        if (root.phone) {
+                                            if (text != "") { root.page = 2; }
+                                        } else {
+                                            // Suggestions; Enter shows every matching song.
+                                            root.search-dropdown = text != "";
+                                        }
                                     }
                                 }
-                                escaped => { keys.focus(); }
+                                accepted => {
+                                    if (!root.phone && root.page != 3 && root.page != 10 && self.text != "") {
+                                        root.search-dropdown = false;
+                                        root.page = 2;
+                                    }
+                                }
+                                escaped => {
+                                    root.search-dropdown = false;
+                                    keys.focus();
+                                }
                             }
                         }
                         // Phone playlists: import an M3U file, or make a new playlist.
@@ -3001,6 +3018,112 @@ export component AppWindow inherits Window {
             vertical-alignment: center;
             horizontal-alignment: center;
             overflow: elide;
+        }
+    }
+
+    // Search suggestions (desktop): artists, albums and songs matching what
+    // is typed. Clicking outside closes them.
+    if root.search-dropdown && !root.phone && root.page != 3 && root.page != 10 && root.search-hits.length > 0: Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        TouchArea {
+            clicked => { root.search-dropdown = false; }
+        }
+        Rectangle {
+            width: 380px;
+            x: Math.max(8px, search.absolute-position.x + search.width - self.width);
+            y: search.absolute-position.y + search.height + 6px;
+            height: Math.min(hits-list.preferred-height, root.height - self.y - 16px);
+            border-radius: 12px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 24px;
+            drop-shadow-offset-y: 8px;
+            drop-shadow-color: #00000060;
+            clip: true;
+            // Swallow clicks between the rows.
+            TouchArea { }
+            hits-list := VerticalLayout {
+                padding: 6px;
+                spacing: 0px;
+                for hit in root.search-hits: Rectangle {
+                    height: hit.kind == -1 ? 28px : hit.kind == 3 ? 38px : 46px;
+                    border-radius: 8px;
+                    background: hit.kind >= 0 && hit-touch.has-hover ? Theme.surface-hover : transparent;
+                    if hit.kind == -1: Text {
+                        x: 10px;
+                        y: 10px;
+                        text: hit.title;
+                        color: Theme.fg-muted;
+                        font-size: 11px;
+                        font-weight: 700;
+                        letter-spacing: 0.6px;
+                    }
+                    if hit.kind == 3: Text {
+                        x: 10px;
+                        width: parent.width - 20px;
+                        height: parent.height;
+                        text: hit.title;
+                        color: Theme.accent;
+                        font-size: 13px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    if hit.kind >= 0 && hit.kind <= 2: HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 10px;
+                        Rectangle {
+                            width: 32px;
+                            height: 32px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: hit.kind == 0 ? 16px : 6px;
+                            background: Theme.surface-hover;
+                            Image {
+                                width: 16px;
+                                height: 16px;
+                                source: hit.kind == 0 ? @image-url("icons/artist.svg") : hit.kind == 1 ? @image-url("icons/album.svg") : @image-url("icons/song.svg");
+                                colorize: Theme.fg-muted;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 1px;
+                            Text {
+                                text: hit.title;
+                                color: Theme.fg;
+                                font-size: 13px;
+                                font-weight: 600;
+                                overflow: elide;
+                            }
+                            if hit.subtitle != "": Text {
+                                text: hit.subtitle;
+                                color: Theme.fg-muted;
+                                font-size: 12px;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                    hit-touch := TouchArea {
+                        enabled: hit.kind >= 0;
+                        mouse-cursor: hit.kind >= 0 ? pointer : default;
+                        clicked => {
+                            root.search-dropdown = false;
+                            root.search-pick(hit.kind, hit.index);
+                            if (hit.kind == 3) {
+                                root.page = 2;
+                            } else {
+                                search.text = "";
+                                if (hit.kind == 0) { root.page = 0; }
+                                if (hit.kind == 1) { root.page = 5; }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
