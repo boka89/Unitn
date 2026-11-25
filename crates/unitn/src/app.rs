@@ -2458,7 +2458,10 @@ impl App {
                 hits.push(header("ALBUMS"));
                 for i in albums {
                     let a = &self.albums[i];
-                    hits.push(SearchHit { kind: 1, index: i as i32, title: a.title.as_str().into(), subtitle: a.artist.as_str().into() });
+                    // The same album can be on the computer and on a server.
+                    let badge = self.album_origins.get(i).map(|o| self.source_badge(o)).unwrap_or_default();
+                    let subtitle = if badge.is_empty() { a.artist.clone() } else { format!("{} · {badge}", a.artist) };
+                    hits.push(SearchHit { kind: 1, index: i as i32, title: a.title.as_str().into(), subtitle: subtitle.into() });
                 }
             }
             let songs = pick(self.songs.iter().map(|t| t.title.clone()).collect(), SONGS);
@@ -2466,7 +2469,12 @@ impl App {
                 hits.push(header("SONGS"));
                 for i in songs {
                     let t = &self.songs[i];
-                    let subtitle = if t.album.is_empty() { t.artist.clone() } else { format!("{} — {}", t.artist, t.album) };
+                    let mut subtitle = if t.album.is_empty() { t.artist.clone() } else { format!("{} — {}", t.artist, t.album) };
+                    if t.is_remote() && !matches!(self.music_source, MusicSource::Server(_)) {
+                        if let Some(cfg) = self.settings.servers.iter().find(|c| servers::owns_track(c, &t.path)) {
+                            subtitle = format!("{subtitle} · {}", cfg.kind.label());
+                        }
+                    }
                     hits.push(SearchHit { kind: 2, index: i as i32, title: t.title.as_str().into(), subtitle: subtitle.into() });
                 }
                 hits.push(SearchHit {
