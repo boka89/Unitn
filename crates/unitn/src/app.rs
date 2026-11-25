@@ -475,6 +475,8 @@ pub struct App {
     artist_filter: Option<String>,
     album_tracks: Vec<Track>,
     open_album: Option<Album>,
+    /// The artist whose page is shown (Albums filtered to them).
+    open_artist: Option<Artist>,
     album_from_server: bool,
     /// The open server album was opened from the library's Albums (not a
     /// server's own album page).
@@ -653,6 +655,7 @@ impl App {
             artist_filter: None,
             album_tracks: Vec::new(),
             open_album: None,
+            open_artist: None,
             album_from_server: false,
             album_in_library: false,
             open_server_key: None,
@@ -1480,6 +1483,9 @@ impl App {
         if let Some(p) = self.open_album.as_ref().and_then(|a| a.cover.clone()) {
             wanted.push(p);
         }
+        if let Some(p) = self.open_artist.as_ref().and_then(|a| self.artist_picture(a)) {
+            wanted.push(p);
+        }
         if let (0, Some((a, b))) = (self.page, self.album_range) {
             wanted.extend(self.albums.iter().take(b + 1).skip(a).filter_map(|al| al.cover.clone()));
         }
@@ -1635,6 +1641,12 @@ impl App {
                 row.has_image = true;
                 row.pending = false;
                 artists.set_row_data(i, row);
+            }
+        }
+        if let Some(path) = self.open_artist.as_ref().and_then(|a| self.artist_picture(a)).filter(|p| ready.contains(p)) {
+            if let Some(Some(img)) = self.thumbs.get(&path) {
+                ui.set_artist_image(img.clone());
+                ui.set_artist_has_image(true);
             }
         }
         if let Some(path) = self.open_album.as_ref().and_then(|a| a.cover.clone()).filter(|p| ready.contains(p)) {
@@ -1828,6 +1840,9 @@ impl App {
         if entries.is_empty() && self.artist_filter.is_some() && self.query.is_empty() {
             self.artist_filter = None;
             entries = self.library_albums(None);
+        }
+        if self.artist_filter.is_none() {
+            self.open_artist = None;
         }
         self.artists = self.library_artists();
         self.songs = self.library_songs();
@@ -2496,10 +2511,9 @@ impl App {
     pub fn search_pick(&mut self, kind: i32, index: usize) {
         match kind {
             0 => {
-                let Some(name) = self.artists.get(index).map(|a| a.name.clone()) else { return };
+                let Some(artist) = self.artists.get(index).cloned() else { return };
                 self.clear_search();
-                self.artist_filter = Some(name);
-                self.reload_library();
+                self.show_artist(artist);
             }
             1 => {
                 self.open_album(index);
@@ -2580,14 +2594,69 @@ impl App {
     }
 
     pub fn open_artist(&mut self, index: usize) {
-        let Some(artist) = self.artists.get(index) else { return };
+        let Some(artist) = self.artists.get(index).cloned() else { return };
+        self.show_artist(artist);
+    }
+
+    /// The artist's page: their picture, name and Play/Shuffle, and their
+    /// albums below.
+    fn show_artist(&mut self, artist: Artist) {
         self.artist_filter = Some(artist.name.clone());
+        self.open_artist = Some(artist.clone());
         self.reload_library();
+        let (image, has_image) = self.thumb(&self.artist_picture(&artist));
+        let songs: usize = self.artist_songs().len();
+        let mut info = plural(self.albums.len(), "album", "albums");
+        if songs > 0 {
+            info = format!("{info} • {}", plural(songs, "song", "songs"));
+        }
+        if let Some(ui) = self.ui() {
+            ui.set_artist_name(artist.name.as_str().into());
+            ui.set_artist_info(info.into());
+            ui.set_artist_image(image);
+            ui.set_artist_has_image(has_image);
+        }
+        self.sync_thumbs();
+    }
+
+    /// The songs of the artist whose page is open, album by album as shown.
+    fn artist_songs(&self) -> Vec<Track> {
+        let mut out = Vec::new();
+        for (album, origin) in self.albums.iter().zip(self.album_origins.iter()) {
+            let mut tracks: Vec<Track> = if origin.is_none() {
+                self.library.album_tracks(&album.artist, &album.title).unwrap_or_default()
+            } else {
+                // Server albums: the songs the library has saved for them.
+                let (title, artist) = (album.title.to_lowercase(), album.artist.to_lowercase());
+                let mut t: Vec<Track> = self
+                    .songs
+                    .iter()
+                    .filter(|t| t.is_remote() && t.album.to_lowercase() == title && t.grouping_artist().to_lowercase() == artist)
+                    .cloned()
+                    .collect();
+                t.sort_by_key(|t| (t.disc_no, t.track_no));
+                t
+            };
+            out.append(&mut tracks);
+        }
+        out
+    }
+
+    /// Play or Shuffle on an artist's page.
+    pub fn play_artist(&mut self, shuffle: bool) {
+        let songs = self.artist_songs();
+        if songs.is_empty() {
+            self.show_toast("No songs to play for this artist");
+            return;
+        }
+        self.play_tracks(songs, 0, shuffle);
     }
 
     pub fn show_all_albums(&mut self) {
         self.artist_filter = None;
+        self.open_artist = None;
         self.reload_library();
+        self.sync_thumbs();
     }
 
     // ------------------------------------------------------------------
@@ -5625,6 +5694,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_open_album, |a, i| a.open_album(i.max(0) as usize));
     on!(on_open_artist, |a, i| a.open_artist(i.max(0) as usize));
     on!(on_search_pick, |a, kind, i| a.search_pick(kind, i.max(0) as usize));
+    on!(on_play_artist, |a, shuffled| a.play_artist(shuffled));
     on!(on_show_all_albums, |a| a.show_all_albums());
     on!(on_play_album, |a, shuffle| a.play_album(shuffle));
     on!(on_play_album_track, |a, i| a.play_album_track(i.max(0) as usize));

@@ -168,6 +168,14 @@ export component AlbumsPage inherits Rectangle {
     callback covers-visible(int, int);
     /// The albums on screen changed (first and last index).
     callback visible-range(int, int);
+    /// An artist's page: their picture, name and Play/Shuffle above their
+    /// albums.
+    in property <bool> artist-mode;
+    in property <string> artist-name;
+    in property <string> artist-info;
+    in property <image> artist-image;
+    in property <bool> artist-has-image;
+    callback play-artist(bool);
 
     // Width for the cards: 20px margins plus the scrollbar lane, so the last
     // column is never under the scrollbar.
@@ -182,25 +190,122 @@ export component AlbumsPage inherits Rectangle {
     property <length> art: Math.floor((root.cell-w - 24px) / 1px) * 1px;
     property <length> cell-h: root.art + 80px;
     property <length> left: Theme.phone ? 8px : 20px;
+    // The artist's header above the grid (artist pages only).
+    property <length> art-size: Theme.phone ? 112px : 200px;
+    property <length> head-h: !root.artist-mode ? 0px : Theme.phone ? root.art-size + 76px : root.art-size + 36px;
 
     if root.albums.length > 0: ScrollView {
         horizontal-scrollbar-policy: always-off;
         width: parent.width;
         height: parent.height;
         content-width: self.visible-width;
-        content-height: Math.ceil(root.albums.length / root.cols) * root.cell-h + 32px;
+        content-height: root.head-h + Math.ceil(root.albums.length / root.cols) * root.cell-h + 32px;
         // Which cards are on screen, reported (one row at a time) so only
         // those pictures are kept in memory, plus a margin.
-        property <int> first-row: Math.max(0, Math.floor((-self.content-y - 8px) / root.cell-h));
+        property <int> first-row: Math.max(0, Math.floor((-self.content-y - root.head-h - 8px) / root.cell-h));
         property <int> rows-shown: Math.ceil(self.visible-height / root.cell-h) + 1;
         property <int> first-item: self.first-row * root.cols;
         property <int> last-item: Math.min(root.albums.length - 1, (self.first-row + self.rows-shown) * root.cols - 1);
         init => { root.visible-range(self.first-item, self.last-item); root.covers-visible(self.first-item, self.last-item); }
         changed first-item => { root.visible-range(self.first-item, self.last-item); root.covers-visible(self.first-item, self.last-item); }
         changed last-item => { root.visible-range(self.first-item, self.last-item); root.covers-visible(self.first-item, self.last-item); }
+        if root.artist-mode: VerticalLayout {
+            x: 0px;
+            y: 0px;
+            width: parent.width - Theme.scroll-gutter;
+            height: root.head-h;
+            padding: Theme.phone ? 12px : 24px;
+            padding-top: 8px;
+            spacing: 12px;
+            HorizontalLayout {
+                spacing: Theme.phone ? 14px : 24px;
+                // Square, so the whole photo shows.
+                Rectangle {
+                    width: root.art-size;
+                    height: root.art-size;
+                    border-radius: Math.max(6px, root.art-size / 16);
+                    clip: true;
+                    background: root.artist-has-image ? Theme.surface : @linear-gradient(135deg, Theme.accent 0%, #d061ff 100%);
+                    if !root.artist-has-image: Image {
+                        width: root.art-size * 0.4;
+                        height: self.width;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        source: @image-url("icons/artist.svg");
+                        colorize: white;
+                    }
+                    if root.artist-has-image: Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: root.artist-image;
+                        image-fit: cover;
+                        opacity: 0;
+                        init => { self.opacity = 1; }
+                        animate opacity { duration: 180ms; easing: ease-out; }
+                    }
+                }
+                VerticalLayout {
+                    alignment: end;
+                    spacing: 6px;
+                    Text {
+                        text: "ARTIST";
+                        color: Theme.fg-muted;
+                        font-size: 11px;
+                        font-weight: 700;
+                        letter-spacing: 1.5px;
+                    }
+                    Text {
+                        min-width: 0px;
+                        text: root.artist-name;
+                        color: Theme.fg;
+                        font-size: Theme.phone ? 20px : 30px;
+                        font-weight: 800;
+                        overflow: elide;
+                    }
+                    Text {
+                        min-width: 0px;
+                        text: root.artist-info;
+                        color: Theme.fg-muted;
+                        font-size: 13px;
+                        overflow: elide;
+                    }
+                    if !Theme.phone: Rectangle { height: 8px; }
+                    if !Theme.phone: HorizontalLayout {
+                        alignment: start;
+                        spacing: 10px;
+                        PillButton {
+                            text: "Play";
+                            icon: @image-url("icons/play.svg");
+                            primary: true;
+                            clicked => { root.play-artist(false); }
+                        }
+                        PillButton {
+                            text: "Shuffle";
+                            icon: @image-url("icons/shuffle.svg");
+                            clicked => { root.play-artist(true); }
+                        }
+                    }
+                }
+            }
+            if Theme.phone: HorizontalLayout {
+                alignment: start;
+                spacing: 10px;
+                PillButton {
+                    text: "Play";
+                    icon: @image-url("icons/play.svg");
+                    primary: true;
+                    clicked => { root.play-artist(false); }
+                }
+                PillButton {
+                    text: "Shuffle";
+                    icon: @image-url("icons/shuffle.svg");
+                    clicked => { root.play-artist(true); }
+                }
+            }
+        }
         for album[i] in root.albums: AlbumCard {
             x: root.left + Math.mod(i, root.cols) * root.cell-w;
-            y: 8px + Math.floor(i / root.cols) * root.cell-h;
+            y: root.head-h + 8px + Math.floor(i / root.cols) * root.cell-h;
             art: root.art;
             item: album;
             playing: album.key != "" && album.key == root.playing-album;

@@ -101,6 +101,10 @@ run_theme() { # theme-number name
   fi
   click 120 160 3          # Artists: grid of artist pictures
   shot "$2-artists"
+  click 347 170 3          # first artist: their page
+  shot "$2-artist"
+  click 280 34 2           # back arrow: to the Artists grid
+  shot "$2-artist-back"
   click 120 117 2          # back to Albums
   click 341 160            # first album card
   shot "$2-album"
