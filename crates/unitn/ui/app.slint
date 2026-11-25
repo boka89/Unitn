@@ -7,8 +7,9 @@ import {
     PodcastItem, EpisodeItem,
     IconButton, PillButton, NavItem, Dnd, DropTarget, SeekBar, SearchBox, Artwork, Spectrum, Visualizer, VizInfo, TextField, VizControls, BrandMark, IdleArea,
 } from "widgets.slint";
-import { AlbumsPage, AlbumDetailPage, ArtistsPage, SongsPage, RadioPage, QueuePage, NowPlayingPage, SettingsPage, PlaylistPage, ServerPage, PodcastsPage } from "pages.slint";
+import { AlbumsPage, AlbumDetailPage, ArtistsPage, SongsPage, RadioPage, QueuePage, NowPlayingPage, SettingsPage, PlaylistPage, ServerPage, PodcastsPage, StatisticsPage, StatTile, StatRow, DayBar } from "pages.slint";
 
+export { StatTile, StatRow, DayBar }
 export { Theme, Dnd, VizInfo, AlbumItem, TrackItem, ArtistItem, StationItem, QueueEntry, PlaylistItem, FixCandidate, ServerItem, PodcastItem, EpisodeItem }
 
 component ThemeSwitch inherits Rectangle {
@@ -147,8 +148,31 @@ export component AppWindow inherits Window {
 
     // Radio
     in property <[StationItem]> stations;
+
+    // Statistics page (page 11).
+    in property <int> stats-period: 0;
+    in property <[StatTile]> stats-tiles;
+    in property <[StatTile]> stats-library;
+    in property <[DayBar]> stats-days;
+    in property <string> stats-days-total;
+    in property <[StatRow]> stats-songs;
+    in property <[StatRow]> stats-artists;
+    in property <[StatRow]> stats-albums;
+    in property <[StatRow]> stats-genres;
+    in property <bool> stats-empty: true;
+    callback stats-period-changed(int);
     in property <int> radio-tab: 0;
-    in property <bool> radio-hungary: false;
+    /// Radio browsing: the Country, Language, Tag, Format and Bitrate
+    /// buttons and the list of the one that's open.
+    in property <[string]> radio-filter-labels: ["Country", "Language", "Tag", "Format", "Bitrate"];
+    in property <[bool]> radio-filter-active: [false, false, false, false, false];
+    in property <string> radio-picker-title;
+    in property <[string]> radio-picker-items;
+    in property <bool> radio-picker-loading;
+    in-out property <string> radio-picker-query;
+    callback radio-open-picker(int);
+    callback radio-picker-search(string);
+    callback radio-picker-pick(int);
     in property <bool> radio-filtered: false;
     in property <[bool]> radio-genres: [false, false, false, false, false, false];
     in property <bool> radio-loading: false;
@@ -313,6 +337,12 @@ export component AppWindow inherits Window {
     in property <bool> lyrics-synced;
     in property <string> lyrics-status;
     in property <string> lyrics-source;
+    /// Online lyrics of a song on this computer: they can be saved with it.
+    in property <bool> lyrics-can-save;
+    /// Save the shown lyrics: 0 as a file next to the song, 1 in its tags.
+    callback save-lyrics(int);
+    in property <int> lyrics-autosave;
+    callback lyrics-autosave-changed(int);
     callback lyrics-open-changed(bool);
     // Playback settings
     in property <int> crossfade: 0;
@@ -323,6 +353,8 @@ export component AppWindow inherits Window {
     callback lyrics-online-changed(bool);
     in property <bool> startup-sound: true;
     callback startup-sound-changed(bool);
+    in property <bool> resume-session: true;
+    callback resume-session-changed(bool);
     callback radio-genre(int);
     callback add-custom-stream(string, string);
     callback play-station(int);
@@ -485,6 +517,12 @@ export component AppWindow inherits Window {
                             label: "Songs";
                             selected: root.page == 2;
                             clicked => { root.page = 2; }
+                        }
+                        NavItem {
+                            icon: @image-url("icons/stats.svg");
+                            label: "Statistics";
+                            selected: root.page == 11;
+                            clicked => { root.page = 11; }
                         }
                         Rectangle { height: 14px; }
                         Text {
@@ -679,6 +717,7 @@ export component AppWindow inherits Window {
                                 : root.page == 8 ? "Playlist"
                                 : root.page == 9 ? root.server-name
                                 : root.page == 10 ? (root.podcast-view == 1 ? "Podcast" : "Podcasts")
+                                : root.page == 11 ? "Statistics"
                                 : "";
                             color: Theme.fg;
                             font-size: 24px;
@@ -879,7 +918,15 @@ export component AppWindow inherits Window {
                             height: parent.height;
                             stations: root.stations;
                             tab: root.radio-tab;
-                            hungary: root.radio-hungary;
+                            filter-labels: root.radio-filter-labels;
+                            filter-active: root.radio-filter-active;
+                            picker-title: root.radio-picker-title;
+                            picker-items: root.radio-picker-items;
+                            picker-loading: root.radio-picker-loading;
+                            picker-query <=> root.radio-picker-query;
+                            open-picker(k) => { root.radio-open-picker(k); }
+                            picker-search(t) => { root.radio-picker-search(t); }
+                            picker-pick(i) => { root.radio-picker-pick(i); }
                             filtered: root.radio-filtered;
                             genres-on: root.radio-genres;
                             loading: root.radio-loading;
@@ -890,6 +937,21 @@ export component AppWindow inherits Window {
                             add-stream => { add-stream-popup.show(); }
                             play-station(i) => { root.play-station(i); }
                             toggle-favorite(i) => { root.toggle-favorite(i); }
+                        }
+                        if root.page == 11: StatisticsPage {
+                            width: parent.width;
+                            height: parent.height;
+                            period: root.stats-period;
+                            tiles: root.stats-tiles;
+                            library-tiles: root.stats-library;
+                            days: root.stats-days;
+                            days-total: root.stats-days-total;
+                            songs: root.stats-songs;
+                            artists: root.stats-artists;
+                            albums: root.stats-albums;
+                            genres: root.stats-genres;
+                            empty: root.stats-empty;
+                            period-changed(p) => { root.stats-period-changed(p); }
                         }
                         if root.page == 10: PodcastsPage {
                             width: parent.width;
@@ -959,6 +1021,8 @@ export component AppWindow inherits Window {
                             lyrics-synced: root.lyrics-synced;
                             lyrics-status: root.lyrics-status;
                             lyrics-source: root.lyrics-source;
+                            lyrics-can-save: root.lyrics-can-save;
+                            save-lyrics(kind) => { root.save-lyrics(kind); }
                             lyrics-open-changed(o) => { root.lyrics-open-changed(o); }
                         }
                         if root.page == 8: PlaylistPage {
@@ -1018,8 +1082,12 @@ export component AppWindow inherits Window {
                             gapless-albums-changed(on) => { root.gapless-albums-changed(on); }
                             lyrics-online: root.lyrics-online;
                             lyrics-online-changed(on) => { root.lyrics-online-changed(on); }
+                            lyrics-autosave: root.lyrics-autosave;
+                            lyrics-autosave-changed(v) => { root.lyrics-autosave-changed(v); }
                             startup-sound: root.startup-sound;
                             startup-sound-changed(on) => { root.startup-sound-changed(on); }
+                            resume-session: root.resume-session;
+                            resume-session-changed(on) => { root.resume-session-changed(on); }
                         density-changed(c) => {
                             Theme.compact = c;
                             root.density-changed(c);

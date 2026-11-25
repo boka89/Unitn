@@ -26,8 +26,8 @@ use unitn_core::util::format_time;
 use crate::media::{Media, MediaCmd};
 use crate::settings::{Paths, Settings};
 use crate::{
-    AlbumItem, AppWindow, ArtistItem, Dnd, EpisodeItem, FixCandidate, PlaylistItem, PodcastItem, QueueEntry, ServerItem, StationItem,
-    Theme, TrackItem, VizInfo,
+    AlbumItem, AppWindow, ArtistItem, DayBar, Dnd, EpisodeItem, FixCandidate, PlaylistItem, PodcastItem, QueueEntry, ServerItem,
+    StatRow, StatTile, StationItem, Theme, TrackItem, VizInfo,
 };
 
 const RADIO_LIMIT: u32 = 150;
@@ -35,7 +35,17 @@ const RADIO_LIMIT: u32 = 150;
 const VIZ_BARS: usize = 64;
 const RADIO_TAB_POPULAR: i32 = 0;
 const RADIO_TAB_FAVORITES: i32 = 1;
-const RADIO_TAB_HUNGARY: i32 = 2;
+/// The browse buttons on the Radio page, in their order there.
+const RADIO_PICK_COUNTRY: i32 = 0;
+const RADIO_PICK_LANGUAGE: i32 = 1;
+const RADIO_PICK_TAG: i32 = 2;
+const RADIO_PICK_CODEC: i32 = 3;
+const RADIO_PICK_BITRATE: i32 = 4;
+const RADIO_FILTER_NAMES: [&str; 5] = ["Country", "Language", "Tag", "Format", "Bitrate"];
+/// Minimum bitrates offered by the Bitrate button (0 = any).
+const RADIO_BITRATES: [u32; 5] = [0, 64, 128, 192, 320];
+/// At most this many rows in a browse list (the tag list is long).
+const RADIO_PICKER_ROWS: usize = 400;
 /// Genre chips on the Radio page, in their order there (Radio Browser tags).
 const RADIO_GENRES: [&str; 6] = ["pop", "rock", "jazz", "classical", "electronic", "news"];
 /// No chip selected (search results or a genre).
@@ -54,6 +64,8 @@ enum Bg {
     ThumbsDone,
     ScanDone(Result<scanner::ScanStats, String>),
     Stations { request: u64, result: Result<Vec<Station>, String> },
+    /// The countries, languages, tags or formats of the radio directory.
+    RadioFacets { kind: unitn_core::radio::FacetKind, result: Result<Vec<unitn_core::radio::Facet>, String> },
     /// A cover was downloaded for an album.
     ArtFound,
     /// Artist photo lookup finished.
@@ -121,17 +133,41 @@ struct FixState {
     saving: bool,
 }
 
+/// The song being listened to, for the Statistics page: how much of it was
+/// heard (seeking doesn't count) and where it was at the last update.
+struct Listen {
+    track: Track,
+    heard: f64,
+    last: f64,
+}
+
+/// Statistics page.
+const PAGE_STATS: i32 = 11;
+/// Rows in each top list.
+const STATS_TOP: usize = 10;
+/// Days in the listening chart.
+const STATS_DAYS: u32 = 30;
+
 enum StationQuery {
     Top,
-    /// Name search and/or filters: any of the tags, and the country.
-    Filtered { name: String, tags: Vec<String>, country: Option<String> },
+    /// Name search and/or filters.
+    Filtered(unitn_core::radio::Filter),
 }
 
 /// Something in the play queue.
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 enum Item {
     Track(Track),
     Station(Station),
+}
+
+/// What's playing, kept between starts ("Continue where I left off").
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Session {
+    queue: Vec<Item>,
+    current: Option<usize>,
+    position: f64,
 }
 
 /// Loads a cover and shrinks it to list size (at most 400 px, enough for the
@@ -227,6 +263,28 @@ fn album_key(artist: &str, title: &str) -> String {
 
 fn station_key(s: &Station) -> String {
     format!("radio:{}", s.uuid)
+}
+
+/// The browse list a Radio page button opens, for the ones the directory lists.
+fn facet_kind(which: i32) -> Option<unitn_core::radio::FacetKind> {
+    use unitn_core::radio::FacetKind;
+    match which {
+        RADIO_PICK_COUNTRY => Some(FacetKind::Country),
+        RADIO_PICK_LANGUAGE => Some(FacetKind::Language),
+        RADIO_PICK_TAG => Some(FacetKind::Tag),
+        RADIO_PICK_CODEC => Some(FacetKind::Codec),
+        _ => None,
+    }
+}
+
+fn facet_slot(kind: unitn_core::radio::FacetKind) -> usize {
+    use unitn_core::radio::FacetKind;
+    match kind {
+        FacetKind::Country => 0,
+        FacetKind::Language => 1,
+        FacetKind::Tag => 2,
+        FacetKind::Codec => 3,
+    }
 }
 
 fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
@@ -417,7 +475,19 @@ pub struct App {
     radio_request: u64,
     /// Radio filters; several can be on at once (see `refresh_radio`).
     radio_favorites: bool,
-    radio_hungary: bool,
+    /// Picked in the browse lists: (value sent to the directory, name shown).
+    radio_country: Option<(String, String)>,
+    radio_language: Option<(String, String)>,
+    radio_tag: Option<(String, String)>,
+    radio_codec: Option<(String, String)>,
+    radio_bitrate: u32,
+    /// Browse lists loaded so far (country, language, tag, format).
+    radio_facets: [Option<Vec<unitn_core::radio::Facet>>; 4],
+    /// The open browse list (-1 none), and what each of its rows picks
+    /// (None = "Any").
+    radio_picker: i32,
+    radio_picker_query: String,
+    radio_picker_rows: Vec<Option<(String, String)>>,
     radio_genres: [bool; RADIO_GENRES.len()],
     radio_query: String,
 
@@ -471,6 +541,9 @@ pub struct App {
     buffering_since: Option<std::time::Instant>,
     buffering_warned: bool,
     logged_second: i64,
+    listen: Option<Listen>,
+    /// Statistics page: 0 = last 30 days, 1 = all time.
+    stats_period: i32,
 }
 
 impl App {
@@ -550,7 +623,15 @@ impl App {
             radio_tab: RADIO_TAB_POPULAR,
             radio_request: 0,
             radio_favorites: false,
-            radio_hungary: false,
+            radio_country: None,
+            radio_language: None,
+            radio_tag: None,
+            radio_codec: None,
+            radio_bitrate: 0,
+            radio_facets: Default::default(),
+            radio_picker: -1,
+            radio_picker_query: String::new(),
+            radio_picker_rows: Vec::new(),
             radio_genres: [false; RADIO_GENRES.len()],
             radio_query: String::new(),
             queue: Vec::new(),
@@ -592,6 +673,8 @@ impl App {
             buffering_since: None,
             buffering_warned: false,
             logged_second: -1,
+            listen: None,
+            stats_period: 0,
         }
     }
 
@@ -621,6 +704,8 @@ impl App {
             ui.set_gapless_albums(self.settings.gapless_albums);
             ui.set_lyrics_online(self.settings.lyrics_online);
             ui.set_startup_sound(self.settings.startup_sound);
+            ui.set_resume_session(self.settings.resume_session);
+            ui.set_lyrics_autosave(self.settings.lyrics_autosave as i32);
             ui.set_lyrics_open(self.settings.lyrics_open);
             self.show_sort();
             ui.set_sort_ignore_articles(self.settings.sort_ignore_articles);
@@ -636,6 +721,8 @@ impl App {
         self.player.set_crossfade(self.settings.crossfade as f64);
         self.apply_eq();
         self.favorites = self.library.favorite_uuids().unwrap_or_default();
+        // "Continue where I left off": the last song, paused.
+        self.restore_session();
 
         // First run: use the OS music folder.
         if self.library.folders().map(|f| f.is_empty()).unwrap_or(false) {
@@ -973,6 +1060,7 @@ impl App {
                 }
             }
             PlayerEvent::Position { position, duration } => {
+                self.note_listening(position);
                 self.position = position;
                 if duration.is_some() {
                     self.duration = duration;
@@ -986,6 +1074,9 @@ impl App {
                 if let Some(next) = self.planned_next.take() {
                     if let Some(cur) = self.current {
                         self.history.push(cur);
+                    }
+                    if let Some(item) = self.queue.get(next).cloned() {
+                        self.start_listen(&item);
                     }
                     self.mark_current(Some(next));
                     self.position = 0.0;
@@ -1187,6 +1278,7 @@ impl App {
                     }
                 }
             }
+            Bg::RadioFacets { kind, result } => self.radio_facets_loaded(kind, result),
             Bg::Stations { request, result } => {
                 if request != self.radio_request {
                     return; // a newer request superseded this one
@@ -1823,6 +1915,9 @@ impl App {
     /// Only the shown grid's pictures are kept; leaving a grid frees them.
     pub fn page_changed(&mut self, page: i32) {
         self.page = page;
+        if page == PAGE_STATS {
+            self.refresh_stats();
+        }
         if page != 0 {
             self.album_range = None;
         }
@@ -3066,19 +3161,149 @@ impl App {
         }
     }
 
-    /// The Popular, Favorites and Hungary chips. Popular clears every filter;
-    /// Favorites and Hungary switch on and off.
+    /// The Popular and Favorites chips. Popular clears every filter;
+    /// Favorites switches on and off.
     pub fn load_radio_tab(&mut self, tab: i32) {
         match tab {
             RADIO_TAB_FAVORITES => self.radio_favorites = !self.radio_favorites,
-            RADIO_TAB_HUNGARY => self.radio_hungary = !self.radio_hungary,
             _ => {
                 self.radio_favorites = false;
-                self.radio_hungary = false;
                 self.radio_genres = [false; RADIO_GENRES.len()];
+                self.radio_country = None;
+                self.radio_language = None;
+                self.radio_tag = None;
+                self.radio_codec = None;
+                self.radio_bitrate = 0;
                 self.radio_query.clear();
             }
         }
+        self.refresh_radio();
+    }
+
+    /// The filters of the Radio page as a directory search.
+    fn radio_filter(&self) -> unitn_core::radio::Filter {
+        let mut tags = self.selected_genres();
+        if let Some((tag, _)) = &self.radio_tag {
+            // A picked tag narrows the genre chips: with both, look for the tag.
+            tags = vec![tag.clone()];
+        }
+        unitn_core::radio::Filter {
+            name: self.radio_query.clone(),
+            tags,
+            country: self.radio_country.as_ref().map(|(v, _)| v.clone()),
+            language: self.radio_language.as_ref().map(|(v, _)| v.clone()),
+            codec: self.radio_codec.as_ref().map(|(v, _)| v.clone()),
+            bitrate_min: self.radio_bitrate,
+        }
+    }
+
+    /// Labels of the browse buttons ("Country" or the picked one) and which
+    /// of them have something picked.
+    fn radio_filter_labels(&self) -> (Vec<SharedString>, Vec<bool>) {
+        let picked = [&self.radio_country, &self.radio_language, &self.radio_tag, &self.radio_codec];
+        let mut labels = Vec::new();
+        let mut active = Vec::new();
+        for (i, name) in RADIO_FILTER_NAMES.iter().enumerate() {
+            let label = match picked.get(i) {
+                Some(Some((_, shown))) => Some(shown.clone()),
+                Some(None) => None,
+                None if self.radio_bitrate > 0 => Some(format!("{}+ kbps", self.radio_bitrate)),
+                None => None,
+            };
+            active.push(label.is_some());
+            labels.push(label.unwrap_or_else(|| name.to_string()).into());
+        }
+        (labels, active)
+    }
+
+    /// Opens a browse list: loads it from the directory the first time.
+    pub fn radio_open_picker(&mut self, which: i32) {
+        self.radio_picker = which;
+        self.radio_picker_query.clear();
+        if let Some(ui) = self.ui() {
+            ui.set_radio_picker_title(RADIO_FILTER_NAMES.get(which.max(0) as usize).copied().unwrap_or("").into());
+            ui.set_radio_picker_query("".into());
+        }
+        if let Some(kind) = facet_kind(which) {
+            let slot = which as usize;
+            if self.radio_facets[slot].is_none() {
+                if let Some(ui) = self.ui() {
+                    ui.set_radio_picker_loading(true);
+                    ui.set_radio_picker_items(model(Vec::new()));
+                }
+                let radio = self.radio.clone();
+                let tx = self.bg_tx.clone();
+                thread::spawn(move || {
+                    let result = radio.facets(kind).map_err(|e| format!("{e:#}"));
+                    let _ = tx.send(Bg::RadioFacets { kind, result });
+                });
+                return;
+            }
+        }
+        self.fill_radio_picker();
+    }
+
+    /// Narrows the open browse list to what's typed in its search box.
+    pub fn radio_picker_search(&mut self, text: &str) {
+        self.radio_picker_query = text.trim().to_lowercase();
+        self.fill_radio_picker();
+    }
+
+    /// Shows the rows of the open browse list: "Any" first, then the
+    /// countries (or languages…) with the most stations.
+    fn fill_radio_picker(&mut self) {
+        let which = self.radio_picker;
+        let mut rows: Vec<Option<(String, String)>> = vec![None];
+        let mut items: Vec<SharedString> = vec!["Any".into()];
+        if which == RADIO_PICK_BITRATE {
+            for kbps in RADIO_BITRATES.iter().skip(1) {
+                rows.push(Some((kbps.to_string(), format!("{kbps}+ kbps"))));
+                items.push(format!("{kbps} kbps or better").into());
+            }
+        } else if let Some(Some(facets)) = self.radio_facets.get(which.max(0) as usize) {
+            let query = &self.radio_picker_query;
+            for f in facets.iter().filter(|f| query.is_empty() || f.name.to_lowercase().contains(query.as_str())).take(RADIO_PICKER_ROWS) {
+                rows.push(Some((f.value.clone(), f.name.clone())));
+                items.push(format!("{}  ·  {}", f.name, f.stations).into());
+            }
+        }
+        self.radio_picker_rows = rows;
+        if let Some(ui) = self.ui() {
+            ui.set_radio_picker_loading(false);
+            ui.set_radio_picker_items(model(items));
+        }
+    }
+
+    /// A browse list arrived from the directory.
+    fn radio_facets_loaded(&mut self, kind: unitn_core::radio::FacetKind, result: Result<Vec<unitn_core::radio::Facet>, String>) {
+        let slot = facet_slot(kind);
+        match result {
+            Ok(list) => self.radio_facets[slot] = Some(list),
+            Err(e) => {
+                self.show_toast(&format!("Could not load the list: {e}"));
+                if let Some(ui) = self.ui() {
+                    ui.set_radio_picker_loading(false);
+                }
+                return;
+            }
+        }
+        if self.radio_picker == slot as i32 {
+            self.fill_radio_picker();
+        }
+    }
+
+    /// A row of the open browse list was picked.
+    pub fn radio_picker_pick(&mut self, index: usize) {
+        let Some(row) = self.radio_picker_rows.get(index).cloned() else { return };
+        match self.radio_picker {
+            RADIO_PICK_COUNTRY => self.radio_country = row,
+            RADIO_PICK_LANGUAGE => self.radio_language = row,
+            RADIO_PICK_TAG => self.radio_tag = row,
+            RADIO_PICK_CODEC => self.radio_codec = row,
+            RADIO_PICK_BITRATE => self.radio_bitrate = row.and_then(|(v, _)| v.parse().ok()).unwrap_or(0),
+            _ => return,
+        }
+        self.radio_picker = -1;
         self.refresh_radio();
     }
 
@@ -3087,11 +3312,13 @@ impl App {
     }
 
     /// Shows the stations for the current filters. Selected genres combine
-    /// with OR (jazz or rock), the other filters with AND (Hungarian and jazz
+    /// with OR (jazz or rock), the other filters with AND (German and jazz
     /// or rock, among the favorites, matching the search).
     fn refresh_radio(&mut self) {
-        let genres = self.selected_genres();
-        let filtered = self.radio_hungary || !genres.is_empty();
+        let mut filter = self.radio_filter();
+        filter.name.clear();
+        let filtered = !filter.is_empty();
+        let (labels, active) = self.radio_filter_labels();
         self.radio_tab = if self.radio_favorites {
             RADIO_TAB_FAVORITES
         } else if filtered || !self.radio_query.is_empty() {
@@ -3101,20 +3328,25 @@ impl App {
         };
         if let Some(ui) = self.ui() {
             ui.set_radio_tab(self.radio_tab);
-            ui.set_radio_hungary(self.radio_hungary);
+            ui.set_radio_filter_labels(model(labels));
+            ui.set_radio_filter_active(model(active));
             ui.set_radio_filtered(filtered);
             ui.set_radio_genres(model(self.radio_genres.to_vec()));
         }
         if self.radio_favorites {
             self.radio_request += 1; // cancel pending network results
-            let hungary = self.radio_hungary;
+            // Saved favorites know their country by name, not by code, and
+            // don't know their language.
+            let country = self.radio_country.as_ref().map(|(_, name)| name.clone());
             let favorites: Vec<Station> = self
                 .library
                 .favorite_stations()
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|s| !hungary || s.country.eq_ignore_ascii_case("hungary"))
-                .filter(|s| genres.is_empty() || genres.iter().any(|g| s.has_tag(g)))
+                .filter(|s| country.as_ref().map_or(true, |c| s.country.eq_ignore_ascii_case(c)))
+                .filter(|s| filter.tags.is_empty() || filter.tags.iter().any(|g| s.has_tag(g)))
+                .filter(|s| filter.codec.as_ref().map_or(true, |c| s.codec.eq_ignore_ascii_case(c)))
+                .filter(|s| s.bitrate >= filter.bitrate_min)
                 .collect();
             let status = if favorites.is_empty() && filtered {
                 "No favorites match these filters".to_string()
@@ -3125,11 +3357,7 @@ impl App {
         } else if self.radio_tab == RADIO_TAB_POPULAR {
             self.fetch_stations(StationQuery::Top);
         } else {
-            self.fetch_stations(StationQuery::Filtered {
-                name: self.radio_query.clone(),
-                tags: genres,
-                country: self.radio_hungary.then(|| "HU".to_string()),
-            });
+            self.fetch_stations(StationQuery::Filtered(self.radio_filter()));
         }
     }
 
@@ -3145,10 +3373,10 @@ impl App {
         thread::spawn(move || {
             let result = match query {
                 StationQuery::Top => radio.top(RADIO_LIMIT),
-                StationQuery::Filtered { name, tags, country } => {
-                    // A whole country fits in one longer list.
-                    let limit = if tags.is_empty() && name.is_empty() { 300 } else { RADIO_LIMIT };
-                    radio.filtered(&name, &tags, country.as_deref(), limit)
+                StationQuery::Filtered(filter) => {
+                    // A whole country or language fits in one longer list.
+                    let limit = if filter.tags.is_empty() && filter.name.is_empty() { 300 } else { RADIO_LIMIT };
+                    radio.filtered(&filter, limit)
                 }
             }
             .map_err(|e| format!("{e:#}"));
@@ -3332,6 +3560,7 @@ impl App {
     fn play_index(&mut self, index: usize) {
         let Some(item) = self.queue.get(index).cloned() else { return };
         self.logged_second = -1;
+        self.start_listen(&item);
         self.mark_current(Some(index));
         self.position = 0.0;
         self.stream_title.clear();
@@ -3351,6 +3580,7 @@ impl App {
         self.refresh_now_playing();
         self.refresh_position();
         self.update_next();
+        self.save_session();
     }
 
     /// Files or folders dropped on the window: audio files play right away,
@@ -3755,6 +3985,177 @@ impl App {
         self.update_next();
     }
 
+    pub fn set_resume_session(&mut self, on: bool) {
+        self.settings.resume_session = on;
+        self.save_settings();
+        self.save_session();
+        if let Some(ui) = self.ui() {
+            ui.set_resume_session(on);
+        }
+    }
+
+    /// Saves the queue, the current song and the position for the next start
+    /// (or removes the saved one when "Continue where I left off" is off).
+    // ------------------------------------------------------------------
+    // Statistics
+    // ------------------------------------------------------------------
+
+    /// A new song starts: the one before is written down if it was heard
+    /// long enough. Radio and podcast episodes aren't counted.
+    fn start_listen(&mut self, item: &Item) {
+        self.finish_listen();
+        self.listen = match item {
+            Item::Track(t) if !is_episode(t) => Some(Listen { track: t.clone(), heard: 0.0, last: 0.0 }),
+            _ => None,
+        };
+    }
+
+    /// The playback position moved: time played on (not jumps) is heard.
+    fn note_listening(&mut self, position: f64) {
+        let playing = self.state == PlayState::Playing;
+        if let Some(l) = self.listen.as_mut() {
+            let step = position - l.last;
+            if playing && step > 0.0 && step <= 2.5 {
+                l.heard += step;
+            }
+            l.last = position;
+        }
+    }
+
+    /// Writes down the current song as played if it was heard for 30
+    /// seconds (half of a short song). Also called when the app closes.
+    pub fn finish_listen(&mut self) {
+        let Some(l) = self.listen.take() else { return };
+        if l.heard < unitn_core::library::count_threshold(l.track.duration_secs()) {
+            return;
+        }
+        if let Err(e) = self.library.record_play(&l.track, l.heard, unix_now()) {
+            log(&format!("statistics: could not record a play: {e:#}"));
+        }
+        if self.page == PAGE_STATS {
+            self.refresh_stats();
+        }
+    }
+
+    pub fn set_stats_period(&mut self, period: i32) {
+        self.stats_period = period;
+        self.refresh_stats();
+    }
+
+    /// Fills the Statistics page.
+    fn refresh_stats(&mut self) {
+        let now = unix_now();
+        let since = if self.stats_period == 0 { now - i64::from(STATS_DAYS) * 86_400 } else { 0 };
+        let stats = self.library.play_stats(since, STATS_TOP).unwrap_or_default();
+        let totals = self.library.library_totals().unwrap_or_default();
+        let days = self.library.listening_per_day(STATS_DAYS, now).unwrap_or_default();
+        let empty = self.library.play_count().unwrap_or(0) == 0;
+
+        let tile = |value: String, label: &str| StatTile { value: value.into(), label: label.into() };
+        let first = |rows: &[unitn_core::library::Ranked]| rows.first().map(|r| r.name.clone()).unwrap_or_else(|| "—".into());
+        let tiles = vec![
+            tile(grouped(stats.plays), "Plays"),
+            tile(long_time(stats.listened_secs), "Listening time"),
+            tile(first(&stats.artists), "Top artist"),
+            tile(first(&stats.genres), "Top genre"),
+        ];
+        let library = vec![
+            tile(grouped(totals.songs), "Songs"),
+            tile(grouped(totals.albums), "Albums"),
+            tile(grouped(totals.artists), "Artists"),
+            tile(grouped(totals.genres), "Genres"),
+            tile(long_time(totals.duration_secs), "To listen to it all"),
+        ];
+        let rows = |list: &[unitn_core::library::Ranked]| -> Vec<StatRow> {
+            let most = list.first().map_or(1, |r| r.plays.max(1)) as f32;
+            list.iter()
+                .map(|r| StatRow {
+                    name: r.name.as_str().into(),
+                    detail: r.detail.as_str().into(),
+                    count: plural(r.plays as usize, "play", "plays").into(),
+                    share: r.plays as f32 / most,
+                })
+                .collect()
+        };
+        let busiest = days.iter().map(|(_, s)| *s).max().unwrap_or(0).max(1) as f32;
+        let days_total: u64 = days.iter().map(|(_, s)| *s).sum();
+        let count = days.len();
+        let bars: Vec<DayBar> = days
+            .iter()
+            .enumerate()
+            .map(|(i, (day, secs))| {
+                // "2026-11-25": label every fifth day and today.
+                let day_no = day.get(8..10).unwrap_or("").trim_start_matches('0').to_string();
+                let label = if i + 1 == count || (count - 1 - i) % 5 == 0 { day_no.clone() } else { String::new() };
+                let tip = format!("{} · {}", short_date(day), if *secs > 0 { long_time(*secs) } else { "nothing".into() });
+                DayBar { label: label.into(), share: *secs as f32 / busiest, tip: tip.into() }
+            })
+            .collect();
+
+        let Some(ui) = self.ui() else { return };
+        ui.set_stats_period(self.stats_period);
+        ui.set_stats_tiles(model(tiles));
+        ui.set_stats_library(model(library));
+        ui.set_stats_days(model(bars));
+        ui.set_stats_days_total(format!("{} in total", long_time(days_total)).into());
+        ui.set_stats_songs(model(rows(&stats.songs)));
+        ui.set_stats_artists(model(rows(&stats.artists)));
+        ui.set_stats_albums(model(rows(&stats.albums)));
+        ui.set_stats_genres(model(rows(&stats.genres)));
+        ui.set_stats_empty(empty);
+    }
+
+    pub fn save_session(&self) {
+        let path = &self.paths.session;
+        if !self.settings.resume_session || self.current.is_none() {
+            let _ = std::fs::remove_file(path);
+            return;
+        }
+        let session = Session { queue: self.queue.clone(), current: self.current, position: self.position };
+        let Ok(json) = serde_json::to_vec(&session) else { return };
+        // Write to a temporary file first, so a crash can't leave half a file.
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, path);
+        }
+    }
+
+    /// Puts the last session's song back on the player, paused; Play
+    /// continues where it was.
+    pub fn restore_session(&mut self) {
+        if !self.settings.resume_session {
+            return;
+        }
+        let Ok(data) = std::fs::read(&self.paths.session) else { return };
+        let Ok(session) = serde_json::from_slice::<Session>(&data) else {
+            log("session: could not read the saved session");
+            return;
+        };
+        let Some(current) = session.current.filter(|&i| i < session.queue.len()) else { return };
+        // A local song that's gone (moved or deleted) can't continue.
+        if let Item::Track(t) = &session.queue[current] {
+            if !t.is_remote() && !is_episode(t) && !t.path.is_file() {
+                log("session: the last song's file is gone; not restoring");
+                return;
+            }
+        }
+        log(format!("session: restoring {} song(s), at {:.0} s", session.queue.len(), session.position));
+        self.queue = session.queue;
+        self.rebuild_queue_model();
+        self.mark_current(Some(current));
+        self.position = 0.0;
+        if let Item::Track(t) = &self.queue[current] {
+            self.duration = Some(t.duration_secs()).filter(|d| *d > 0.0);
+            if session.position > 3.0 {
+                self.position = session.position;
+                self.resume_at = Some((t.path.clone(), session.position));
+            }
+        }
+        self.refresh_now_playing();
+        self.refresh_position();
+        self.update_next();
+    }
+
     pub fn set_startup_sound(&mut self, on: bool) {
         self.settings.startup_sound = on;
         self.save_settings();
@@ -3783,9 +4184,57 @@ impl App {
         self.load_lyrics();
     }
 
+    /// The current song, if it's a file on this computer (not a server
+    /// song, a podcast episode or a radio station).
+    fn current_local_song(&self) -> Option<PathBuf> {
+        match self.current_item() {
+            Some(Item::Track(t)) if !t.is_remote() && !is_episode(t) && t.path.is_file() => Some(t.path.clone()),
+            _ => None,
+        }
+    }
+
+    /// Saves the shown lyrics with the song: `kind` 0 as a file next to it
+    /// (.lrc or .txt), 1 in the song's tags. `auto`: from the "Save lyrics
+    /// found online" setting (only a short note when it worked).
+    pub fn save_lyrics(&mut self, kind: i32, auto: bool) {
+        let (Some(song), Some(found)) = (self.current_local_song(), self.lyrics.clone()) else { return };
+        if found.instrumental || found.lines.is_empty() {
+            return;
+        }
+        let result = if kind == 0 {
+            lyrics::save_sidecar(&song, &found).map(|f| {
+                let name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                format!("Lyrics saved as {name}")
+            })
+        } else {
+            lyrics::save_to_tags(&song, &found).map(|_| "Lyrics saved in the song".to_string())
+        };
+        match result {
+            Ok(msg) => {
+                log(format!("lyrics: {msg} ({})", song.display()));
+                if !auto {
+                    self.show_toast(&msg);
+                }
+            }
+            Err(e) => {
+                log(format!("lyrics: saving failed for {}: {e:#}", song.display()));
+                self.show_toast(&format!("Couldn't save the lyrics: {e}"));
+            }
+        }
+    }
+
+    pub fn set_lyrics_autosave(&mut self, value: i32) {
+        self.settings.lyrics_autosave = value.clamp(0, 3) as u8;
+        self.save_settings();
+        if let Some(ui) = self.ui() {
+            ui.set_lyrics_autosave(self.settings.lyrics_autosave as i32);
+        }
+    }
+
     fn show_lyrics(&mut self, lines: Vec<String>, synced: bool, source: &str, status: &str) {
         self.lyrics_line = None;
         if let Some(ui) = self.ui() {
+            ui.set_lyrics_can_save(false);
             ui.set_lyrics_lines(model(lines.into_iter().map(SharedString::from).collect()));
             ui.set_lyrics_synced(synced);
             ui.set_lyrics_source(source.into());
@@ -3846,6 +4295,22 @@ impl App {
                 let (synced, source) = (l.synced, l.source.clone());
                 self.lyrics = Some(l);
                 self.show_lyrics(lines, synced, &source, "");
+                // Lyrics from LRCLIB for a song on this computer can be kept with it.
+                let savable = source == "LRCLIB" && self.current_local_song().is_some();
+                if let Some(ui) = self.ui() {
+                    ui.set_lyrics_can_save(savable);
+                }
+                if savable {
+                    match self.settings.lyrics_autosave {
+                        1 => self.save_lyrics(0, true),
+                        2 => self.save_lyrics(1, true),
+                        3 => {
+                            self.save_lyrics(0, true);
+                            self.save_lyrics(1, true);
+                        }
+                        _ => {}
+                    }
+                }
             }
             None => {
                 let status = if failed {
@@ -4277,6 +4742,9 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_rescan, |a| a.start_scan());
     on!(on_radio_select_tab, |a, t| a.load_radio_tab(t));
     on!(on_radio_genre, |a, g| a.radio_genre(g.max(0) as usize));
+    on!(on_radio_open_picker, |a, k| a.radio_open_picker(k));
+    on!(on_radio_picker_pick, |a, i| a.radio_picker_pick(i.max(0) as usize));
+    on!(on_radio_picker_search, |a, t| a.radio_picker_search(t.as_str()));
     on!(on_add_custom_stream, |a, name, url| a.add_custom_stream(name.as_str(), url.as_str()));
     on!(on_play_station, |a, i| a.play_station(i.max(0) as usize));
     on!(on_toggle_favorite, |a, i| a.toggle_favorite(i.max(0) as usize));
@@ -4320,6 +4788,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_set_sort, |a, page, index| a.set_sort(page, index.max(0) as usize));
     on!(on_sort_ignore_articles_changed, |a, on| a.set_sort_ignore_articles(on));
     on!(on_page_changed, |a, page| a.page_changed(page));
+    on!(on_stats_period_changed, |a, p| a.set_stats_period(p));
     on!(on_album_range, |a, first, last| a.set_album_range(first, last));
     on!(on_artist_range, |a, first, last| a.set_artist_range(first, last));
     on!(on_flip_sort, |a, page| a.flip_sort(page));
@@ -4335,6 +4804,9 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_gapless_albums_changed, |a, on| a.set_gapless_albums(on));
     on!(on_lyrics_online_changed, |a, on| a.set_lyrics_online(on));
     on!(on_startup_sound_changed, |a, on| a.set_startup_sound(on));
+    on!(on_resume_session_changed, |a, on| a.set_resume_session(on));
+    on!(on_save_lyrics, |a, kind| a.save_lyrics(kind, false));
+    on!(on_lyrics_autosave_changed, |a, v| a.set_lyrics_autosave(v));
     on!(on_lyrics_open_changed, |a, open| a.set_lyrics_open(open));
     on!(on_podcast_subscribe, |a, i| a.podcast_subscribe(i.max(0) as usize));
     on!(on_podcast_open, |a, i| a.podcast_open(i.max(0) as usize));
@@ -4458,6 +4930,44 @@ fn open_in_browser(url: &str) -> bool {
             log(format!("could not open the browser: {e}"));
             false
         }
+    }
+}
+
+/// 12345 → "12,345".
+fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Seconds as "3 d 4 h", "5 h 12 min", "12 min" or "40 s".
+fn long_time(secs: u64) -> String {
+    let (d, h, m) = (secs / 86_400, secs / 3600 % 24, secs / 60 % 60);
+    if d > 0 {
+        format!("{d} d {h} h")
+    } else if h > 0 {
+        format!("{h} h {m} min")
+    } else if m > 0 {
+        format!("{m} min")
+    } else {
+        format!("{secs} s")
+    }
+}
+
+/// "2026-11-25" → "Nov 25".
+fn short_date(day: &str) -> String {
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let month = day.get(5..7).and_then(|m| m.parse::<usize>().ok()).and_then(|m| MONTHS.get(m.wrapping_sub(1)));
+    let day_no = day.get(8..10).map(|d| d.trim_start_matches('0')).unwrap_or("");
+    match month {
+        Some(m) => format!("{m} {day_no}"),
+        None => day.to_string(),
     }
 }
 

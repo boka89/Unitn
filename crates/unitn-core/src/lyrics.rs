@@ -217,6 +217,32 @@ fn cp1252(b: u8) -> char {
     }
 }
 
+/// Saves lyrics next to the song, named like it: `Song.lrc` for synced
+/// lyrics, `Song.txt` for plain ones. Returns the file written.
+pub fn save_sidecar(song: &Path, lyrics: &Lyrics) -> anyhow::Result<std::path::PathBuf> {
+    let ext = if lyrics.synced { "lrc" } else { "txt" };
+    let file = song.with_extension(ext);
+    std::fs::write(&file, lyrics.to_text())?;
+    Ok(file)
+}
+
+/// Writes lyrics into the song file's own tags (synced lyrics as LRC text,
+/// as most players expect), creating a tag if the file has none.
+pub fn save_to_tags(song: &Path, lyrics: &Lyrics) -> anyhow::Result<()> {
+    use lofty::config::WriteOptions;
+    use lofty::prelude::*;
+    use lofty::tag::Tag;
+    let mut tagged = lofty::read_from_path(song)?;
+    if tagged.primary_tag().is_none() {
+        let kind = tagged.primary_tag_type();
+        tagged.insert_tag(Tag::new(kind));
+    }
+    let tag = tagged.primary_tag_mut().ok_or_else(|| anyhow::anyhow!("this file type can't hold tags"))?;
+    tag.insert_text(ItemKey::Lyrics, lyrics.to_text());
+    tag.save_to_path(song, WriteOptions::default())?;
+    Ok(())
+}
+
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .user_agent(crate::USER_AGENT)
@@ -367,6 +393,23 @@ mod tests {
         assert!(!two.synced);
         assert_eq!(two.lines[0].text, "café");
         assert_eq!(local(&c).unwrap().lines[0].text, "next to song");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn saves_lyrics_next_to_the_song() {
+        let dir = std::env::temp_dir().join(format!("unitn-lyrics-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let song = dir.join("01 Song.flac");
+        std::fs::write(&song, b"not really audio").unwrap();
+        let synced = parse("[00:01.50]one\n[00:03.00]two", "LRCLIB").unwrap();
+        assert_eq!(save_sidecar(&song, &synced).unwrap(), dir.join("01 Song.lrc"));
+        // It is found again, as the same lyrics.
+        let again = local(&song).unwrap();
+        assert!(again.synced);
+        assert_eq!(again.lines, synced.lines);
+        let plain = parse("just words", "LRCLIB").unwrap();
+        assert_eq!(save_sidecar(&song, &plain).unwrap(), dir.join("01 Song.txt"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

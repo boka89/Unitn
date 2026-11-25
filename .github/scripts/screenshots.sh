@@ -161,14 +161,18 @@ run_theme() { # theme-number name
   click 1070 92 3          # Lyrics button (synced .lrc next to the song)
   shot "$2-lyrics"
   click 1070 92 1          # back to the visualizer
-  click 120 285 6          # Radio (wait for stations)
+  click 120 326 6          # Radio (wait for stations)
   shot "$2-radio"
   if [ "$2" = dark ]; then
-    click 700 168 10       # play first station
+    click 306 137 6        # Country: the list of countries
+    shot "$2-radio-countries"
+    click 400 275 6        # the country with the most stations
+    shot "$2-radio-country"
+    click 700 210 10       # play first station
     shot "$2-radio-playing"
     click 45 776 3         # Now Playing: the cover on the player bar
     shot "$2-nowplaying-radio"
-    click 120 327 2        # Podcasts
+    click 120 368 2        # Podcasts
     shot "$2-podcasts-empty"
     click 1110 42 1        # search box
     xdotool type --delay 60 "NASA"; sleep 8
@@ -185,24 +189,26 @@ run_theme() { # theme-number name
     click 45 776 3         # Now Playing: the cover on the player bar
     shot "$2-nowplaying-podcast"
     sleep 14                 # progress is saved every 15 s
-    click 120 327 2          # back to the show: progress bar and "… left"
+    click 120 368 2          # back to the show: progress bar and "… left"
     shot "$2-podcast-progress"
-    click 120 486 1          # somewhere else (the server), then play the episode again
-    click 120 327 2
+    click 120 527 1          # somewhere else (the server), then play the episode again
+    click 120 368 2
     click 600 250 10         # same episode: continues where it was
     shot "$2-podcast-resume"
   fi
   click 120 201            # Songs
   shot "$2-songs"
+  click 120 242 2          # Statistics
+  shot "$2-statistics"
   click 200 697            # Settings (gear next to the theme switch)
   shot "$2-settings"
   if [ -f /tmp/jellyfin.json ]; then
-    click 120 486 6        # the Jellyfin server in the sidebar
+    click 120 527 6        # the Jellyfin server in the sidebar
     shot "$2-server"
     click 341 206 4        # first album on the server
     shot "$2-server-album"
     click 524 257 4        # play it
-    click 120 486 3        # back to the server: the album is marked
+    click 120 527 3        # back to the server: the album is marked
     shot "$2-server-playing"
   fi
   if [ "$2" = dark ]; then

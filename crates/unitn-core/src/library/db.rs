@@ -7,6 +7,8 @@ use rusqlite::{params, Connection, Row};
 
 use crate::model::{Album, Artist, Playlist, Station, Track};
 
+pub mod stats;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS folders (path TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS tracks (
@@ -112,6 +114,18 @@ CREATE TABLE IF NOT EXISTS stations (
     bitrate INTEGER NOT NULL DEFAULT 0,
     added   INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS plays (
+    id           INTEGER PRIMARY KEY,
+    at           INTEGER NOT NULL,
+    listened_ms  INTEGER NOT NULL DEFAULT 0,
+    path         TEXT NOT NULL DEFAULT '',
+    title        TEXT NOT NULL DEFAULT '',
+    artist       TEXT NOT NULL DEFAULT '',
+    album        TEXT NOT NULL DEFAULT '',
+    album_artist TEXT NOT NULL DEFAULT '',
+    genre        TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_plays_at ON plays(at);
 ";
 
 /// The artist an album is grouped under: album artist, falling back to artist.

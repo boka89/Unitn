@@ -2,6 +2,28 @@
 
 Older versions: see the [changelog on the website](https://unitn.bokors.net/changelog/).
 
+## 0.7.0 — 2026-11-25
+
+Four new features requested by **@jo-el414** (#33–#36). Thanks!
+
+### New
+
+- **Continue where you left off** (#33): when Unitn opens, the queue, the song and where you
+  were in it come back, ready to play. Settings → "Continue where I left off" turns it off.
+- **Save lyrics found online** (#34): when lyrics come from LRCLIB, "Save as file" (a `.lrc` or
+  `.txt` next to the song) and "Save in song" (the song's lyrics tag) buttons appear in the
+  lyrics panel. Settings → "Save lyrics found online" can do it automatically: as a file, in the
+  song, or both. Only for songs on your computer.
+- **Browse radio** (#35): Country, Language, Tag, Format and Bitrate buttons open a searchable
+  list from Radio Browser, sorted by how many stations each has. They combine with the genre
+  chips, Favorites and the search box. They replace the Hungary chip.
+- **Statistics** (#36): a new page in the sidebar with plays, listening time, top artist and
+  genre, the top 10 songs, artists, albums and genres (last 30 days or all time), a chart of
+  listening time per day, and your library's songs, albums, artists, genres and total length.
+  A song counts once you've listened to 30 seconds of it (half, for songs under a minute);
+  skipping ahead doesn't count as listening. Radio and podcasts aren't counted. The history
+  starts with this version.
+
 ## 0.6.7 — 2026-11-24
 
 More memory work from **@jo-el414**'s testing (#30). Thanks!

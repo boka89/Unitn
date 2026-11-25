@@ -321,6 +321,8 @@ fn run() -> Result<()> {
 
     unitn_core::log::log("startup: ready");
     slint::run_event_loop()?;
+    app.borrow_mut().finish_listen();
+    app.borrow().save_session();
     ui.hide()?;
     app.borrow().save_settings();
     Ok(())
