@@ -203,7 +203,6 @@ export component AlbumsPage inherits Rectangle {
             y: 8px + Math.floor(i / root.cols) * root.cell-h;
             art: root.art;
             item: album;
-            art: root.art;
             playing: album.key != "" && album.key == root.playing-album;
             drag-what: "album:" + i;
             clicked => { root.open-album(i); }
