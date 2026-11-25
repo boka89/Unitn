@@ -47,13 +47,18 @@ no account and no tracking.
 - **Lyrics** on Now Playing: synced lyrics scroll along with the song and highlight the current
   line. They come from a `.lrc` or `.txt` file named like the song (next to it, or in a `Lyrics`
   subfolder of the album folder), from the song's own tags, or online from the free
-  [LRCLIB](https://lrclib.net) (can be turned off)
+  [LRCLIB](https://lrclib.net) (can be turned off). Lyrics found online can be saved next to the
+  song (`.lrc`/`.txt`) or into its tags, with a button or automatically (Settings)
 - **Internet radio** with ~50,000 stations from the open [Radio Browser](https://www.radio-browser.info),
   Popular / Favorites, genre chips, browse by country, language, tag, format and bitrate, and your own stream URLs
 - **Playlists**: create, rename, reorder songs (drag the handle, or "Move to top / bottom" in
   the song menu), import/export M3U, and save the queue as a playlist; local songs and songs from
   your servers can be mixed
-- **Queue** with drag-to-reorder, shuffle, repeat all / repeat one
+- **Queue** with drag-to-reorder, shuffle, repeat all / repeat one. Unitn starts where you left
+  off: the queue, the song and the position come back when you open it (can be turned off)
+- **Statistics**: plays and listening time for the last 30 days or all time, top songs,
+  artists, albums and genres, listening time per day and your library's totals. A song counts
+  once you've listened to 30 seconds of it (half of a song shorter than a minute)
 - **Gapless playback** and **crossfade** (2–12 s; optionally keep songs of the same album gapless), and
   whole-file preloading so music from network shares doesn't stutter
 - **Winamp-style 10-band equalizer** with preamp, presets and a live response curve

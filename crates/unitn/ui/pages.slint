@@ -2360,3 +2360,258 @@ export component PodcastsPage inherits Rectangle {
         }
     }
 }
+
+/// A number on the Statistics page ("1,204" / "Plays").
+export struct StatTile {
+    value: string,
+    label: string,
+}
+
+/// A row of a top list: the song (artist), how often, and its share of the
+/// first row's plays for the bar behind it.
+export struct StatRow {
+    name: string,
+    detail: string,
+    count: string,
+    share: float,
+}
+
+/// A day of the listening chart: its short label, its share of the
+/// busiest day and the time listened.
+export struct DayBar {
+    label: string,
+    share: float,
+    tip: string,
+}
+
+component StatCard inherits Rectangle {
+    in property <StatTile> tile;
+    horizontal-stretch: 1;
+    min-width: 120px;
+    height: 78px;
+    border-radius: 14px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 2px;
+        alignment: center;
+        Text {
+            text: root.tile.value;
+            color: Theme.fg;
+            font-size: 22px;
+            font-weight: 800;
+            overflow: elide;
+        }
+        Text {
+            text: root.tile.label;
+            color: Theme.fg-muted;
+            font-size: 12px;
+            overflow: elide;
+        }
+    }
+}
+
+component TopList inherits Rectangle {
+    in property <string> title;
+    in property <[StatRow]> rows;
+    horizontal-stretch: 1;
+    min-width: 240px;
+    border-radius: 14px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 6px;
+        alignment: start;
+        Text {
+            text: root.title;
+            color: Theme.fg;
+            font-size: 15px;
+            font-weight: 700;
+        }
+        if root.rows.length == 0: Text {
+            text: "Nothing played yet";
+            color: Theme.fg-muted;
+            font-size: 12px;
+        }
+        for row[i] in root.rows: Rectangle {
+            height: 34px;
+            // The bar: this row's plays against the most played.
+            Rectangle {
+                x: 0px;
+                width: Math.max(6px, parent.width * row.share);
+                border-radius: 6px;
+                background: Theme.accent-soft;
+            }
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 8px;
+                Text {
+                    width: 18px;
+                    text: i + 1;
+                    color: Theme.fg-muted;
+                    font-size: 12px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: row.detail == "" ? row.name : row.name + "  ·  " + row.detail;
+                    color: Theme.fg;
+                    font-size: 13px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Text {
+                    text: row.count;
+                    color: Theme.fg-muted;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+/// Listening statistics: library totals, plays, top songs, artists, albums
+/// and genres, and the time listened per day.
+export component StatisticsPage inherits Rectangle {
+    /// 0 = last 30 days, 1 = all time.
+    in property <int> period;
+    in property <[StatTile]> tiles;
+    in property <[StatTile]> library-tiles;
+    in property <[DayBar]> days;
+    in property <string> days-total;
+    in property <[StatRow]> songs;
+    in property <[StatRow]> artists;
+    in property <[StatRow]> albums;
+    in property <[StatRow]> genres;
+    in property <bool> empty;
+    callback period-changed(int);
+
+    scroll := ScrollView {
+        horizontal-scrollbar-policy: always-off;
+        width: parent.width;
+        height: parent.height;
+        content-width: self.visible-width;
+        content-height: content.preferred-height;
+        content := VerticalLayout {
+            width: scroll.visible-width;
+            padding: 24px;
+            padding-top: 4px;
+            padding-right: 24px + Theme.scroll-gutter;
+            spacing: 16px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Chip { text: "Last 30 days"; selected: root.period == 0; clicked => { root.period-changed(0); } }
+                Chip { text: "All time"; selected: root.period == 1; clicked => { root.period-changed(1); } }
+            }
+            if root.empty: Text {
+                text: "Nothing played yet. A song counts once you've listened to 30 seconds of it (or half, for short ones).";
+                color: Theme.fg-muted;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                for t in root.tiles: StatCard { tile: t; }
+            }
+
+            // Listening time per day, last 30 days.
+            Rectangle {
+                height: 190px;
+                border-radius: 14px;
+                background: Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+                    HorizontalLayout {
+                        Text {
+                            horizontal-stretch: 1;
+                            text: "Listening time, last 30 days";
+                            color: Theme.fg;
+                            font-size: 15px;
+                            font-weight: 700;
+                        }
+                        Text {
+                            text: root.days-total;
+                            color: Theme.fg-muted;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                    }
+                    chart := HorizontalLayout {
+                        vertical-stretch: 1;
+                        spacing: 3px;
+                        for d in root.days: day := Rectangle {
+                            horizontal-stretch: 1;
+                            Rectangle {
+                                y: parent.height - 16px - self.height;
+                                width: parent.width;
+                                height: d.share > 0 ? Math.max(3px, (parent.height - 18px) * d.share) : 1px;
+                                border-radius: 3px;
+                                background: d.share > 0 ? (day-touch.has-hover ? Theme.accent-hover : Theme.accent) : Theme.border;
+                            }
+                            Text {
+                                y: parent.height - 13px;
+                                width: parent.width;
+                                text: d.label;
+                                color: Theme.fg-muted;
+                                font-size: 9px;
+                                horizontal-alignment: center;
+                            }
+                            day-touch := TouchArea { }
+                            if day-touch.has-hover && d.tip != "": Rectangle {
+                                y: 0px;
+                                width: tip-text.preferred-width + 12px;
+                                x: (parent.width - self.width) / 2;
+                                height: 22px;
+                                border-radius: 6px;
+                                background: Theme.fg;
+                                tip-text := Text {
+                                    text: d.tip;
+                                    color: Theme.bg;
+                                    font-size: 11px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+                TopList { title: "Top songs"; rows: root.songs; }
+                TopList { title: "Top artists"; rows: root.artists; }
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                TopList { title: "Top albums"; rows: root.albums; }
+                TopList { title: "Top genres"; rows: root.genres; }
+            }
+
+            Text {
+                text: "Your library";
+                color: Theme.fg;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            HorizontalLayout {
+                spacing: 12px;
+                for t in root.library-tiles: StatCard { tile: t; }
+            }
+        }
+    }
+}

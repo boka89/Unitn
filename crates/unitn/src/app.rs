@@ -26,8 +26,8 @@ use unitn_core::util::format_time;
 use crate::media::{Media, MediaCmd};
 use crate::settings::{Paths, Settings};
 use crate::{
-    AlbumItem, AppWindow, ArtistItem, Dnd, EpisodeItem, FixCandidate, PlaylistItem, PodcastItem, QueueEntry, ServerItem, StationItem,
-    Theme, TrackItem, VizInfo,
+    AlbumItem, AppWindow, ArtistItem, DayBar, Dnd, EpisodeItem, FixCandidate, PlaylistItem, PodcastItem, QueueEntry, ServerItem,
+    StatRow, StatTile, StationItem, Theme, TrackItem, VizInfo,
 };
 
 const RADIO_LIMIT: u32 = 150;
@@ -132,6 +132,21 @@ struct FixState {
     rows: Vec<FixCandidate>,
     saving: bool,
 }
+
+/// The song being listened to, for the Statistics page: how much of it was
+/// heard (seeking doesn't count) and where it was at the last update.
+struct Listen {
+    track: Track,
+    heard: f64,
+    last: f64,
+}
+
+/// Statistics page.
+const PAGE_STATS: i32 = 11;
+/// Rows in each top list.
+const STATS_TOP: usize = 10;
+/// Days in the listening chart.
+const STATS_DAYS: u32 = 30;
 
 enum StationQuery {
     Top,
@@ -526,6 +541,9 @@ pub struct App {
     buffering_since: Option<std::time::Instant>,
     buffering_warned: bool,
     logged_second: i64,
+    listen: Option<Listen>,
+    /// Statistics page: 0 = last 30 days, 1 = all time.
+    stats_period: i32,
 }
 
 impl App {
@@ -655,6 +673,8 @@ impl App {
             buffering_since: None,
             buffering_warned: false,
             logged_second: -1,
+            listen: None,
+            stats_period: 0,
         }
     }
 
@@ -1040,6 +1060,7 @@ impl App {
                 }
             }
             PlayerEvent::Position { position, duration } => {
+                self.note_listening(position);
                 self.position = position;
                 if duration.is_some() {
                     self.duration = duration;
@@ -1053,6 +1074,9 @@ impl App {
                 if let Some(next) = self.planned_next.take() {
                     if let Some(cur) = self.current {
                         self.history.push(cur);
+                    }
+                    if let Some(item) = self.queue.get(next).cloned() {
+                        self.start_listen(&item);
                     }
                     self.mark_current(Some(next));
                     self.position = 0.0;
@@ -1891,6 +1915,9 @@ impl App {
     /// Only the shown grid's pictures are kept; leaving a grid frees them.
     pub fn page_changed(&mut self, page: i32) {
         self.page = page;
+        if page == PAGE_STATS {
+            self.refresh_stats();
+        }
         if page != 0 {
             self.album_range = None;
         }
@@ -3533,6 +3560,7 @@ impl App {
     fn play_index(&mut self, index: usize) {
         let Some(item) = self.queue.get(index).cloned() else { return };
         self.logged_second = -1;
+        self.start_listen(&item);
         self.mark_current(Some(index));
         self.position = 0.0;
         self.stream_title.clear();
@@ -3968,6 +3996,115 @@ impl App {
 
     /// Saves the queue, the current song and the position for the next start
     /// (or removes the saved one when "Continue where I left off" is off).
+    // ------------------------------------------------------------------
+    // Statistics
+    // ------------------------------------------------------------------
+
+    /// A new song starts: the one before is written down if it was heard
+    /// long enough. Radio and podcast episodes aren't counted.
+    fn start_listen(&mut self, item: &Item) {
+        self.finish_listen();
+        self.listen = match item {
+            Item::Track(t) if !is_episode(t) => Some(Listen { track: t.clone(), heard: 0.0, last: 0.0 }),
+            _ => None,
+        };
+    }
+
+    /// The playback position moved: time played on (not jumps) is heard.
+    fn note_listening(&mut self, position: f64) {
+        let playing = self.state == PlayState::Playing;
+        if let Some(l) = self.listen.as_mut() {
+            let step = position - l.last;
+            if playing && step > 0.0 && step <= 2.5 {
+                l.heard += step;
+            }
+            l.last = position;
+        }
+    }
+
+    /// Writes down the current song as played if it was heard for 30
+    /// seconds (half of a short song). Also called when the app closes.
+    pub fn finish_listen(&mut self) {
+        let Some(l) = self.listen.take() else { return };
+        if l.heard < unitn_core::library::count_threshold(l.track.duration_secs()) {
+            return;
+        }
+        if let Err(e) = self.library.record_play(&l.track, l.heard, unix_now()) {
+            log(&format!("statistics: could not record a play: {e:#}"));
+        }
+        if self.page == PAGE_STATS {
+            self.refresh_stats();
+        }
+    }
+
+    pub fn set_stats_period(&mut self, period: i32) {
+        self.stats_period = period;
+        self.refresh_stats();
+    }
+
+    /// Fills the Statistics page.
+    fn refresh_stats(&mut self) {
+        let now = unix_now();
+        let since = if self.stats_period == 0 { now - i64::from(STATS_DAYS) * 86_400 } else { 0 };
+        let stats = self.library.play_stats(since, STATS_TOP).unwrap_or_default();
+        let totals = self.library.library_totals().unwrap_or_default();
+        let days = self.library.listening_per_day(STATS_DAYS, now).unwrap_or_default();
+        let empty = self.library.play_count().unwrap_or(0) == 0;
+
+        let tile = |value: String, label: &str| StatTile { value: value.into(), label: label.into() };
+        let first = |rows: &[unitn_core::library::Ranked]| rows.first().map(|r| r.name.clone()).unwrap_or_else(|| "—".into());
+        let tiles = vec![
+            tile(grouped(stats.plays), "Plays"),
+            tile(long_time(stats.listened_secs), "Listening time"),
+            tile(first(&stats.artists), "Top artist"),
+            tile(first(&stats.genres), "Top genre"),
+        ];
+        let library = vec![
+            tile(grouped(totals.songs), "Songs"),
+            tile(grouped(totals.albums), "Albums"),
+            tile(grouped(totals.artists), "Artists"),
+            tile(grouped(totals.genres), "Genres"),
+            tile(long_time(totals.duration_secs), "To listen to it all"),
+        ];
+        let rows = |list: &[unitn_core::library::Ranked]| -> Vec<StatRow> {
+            let most = list.first().map_or(1, |r| r.plays.max(1)) as f32;
+            list.iter()
+                .map(|r| StatRow {
+                    name: r.name.as_str().into(),
+                    detail: r.detail.as_str().into(),
+                    count: plural(r.plays as usize, "play", "plays").into(),
+                    share: r.plays as f32 / most,
+                })
+                .collect()
+        };
+        let busiest = days.iter().map(|(_, s)| *s).max().unwrap_or(0).max(1) as f32;
+        let days_total: u64 = days.iter().map(|(_, s)| *s).sum();
+        let count = days.len();
+        let bars: Vec<DayBar> = days
+            .iter()
+            .enumerate()
+            .map(|(i, (day, secs))| {
+                // "2026-11-25": label every fifth day and today.
+                let day_no = day.get(8..10).unwrap_or("").trim_start_matches('0').to_string();
+                let label = if i + 1 == count || (count - 1 - i) % 5 == 0 { day_no.clone() } else { String::new() };
+                let tip = format!("{} · {}", short_date(day), if *secs > 0 { long_time(*secs) } else { "nothing".into() });
+                DayBar { label: label.into(), share: *secs as f32 / busiest, tip: tip.into() }
+            })
+            .collect();
+
+        let Some(ui) = self.ui() else { return };
+        ui.set_stats_period(self.stats_period);
+        ui.set_stats_tiles(model(tiles));
+        ui.set_stats_library(model(library));
+        ui.set_stats_days(model(bars));
+        ui.set_stats_days_total(format!("{} in total", long_time(days_total)).into());
+        ui.set_stats_songs(model(rows(&stats.songs)));
+        ui.set_stats_artists(model(rows(&stats.artists)));
+        ui.set_stats_albums(model(rows(&stats.albums)));
+        ui.set_stats_genres(model(rows(&stats.genres)));
+        ui.set_stats_empty(empty);
+    }
+
     pub fn save_session(&self) {
         let path = &self.paths.session;
         if !self.settings.resume_session || self.current.is_none() {
@@ -4651,6 +4788,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_set_sort, |a, page, index| a.set_sort(page, index.max(0) as usize));
     on!(on_sort_ignore_articles_changed, |a, on| a.set_sort_ignore_articles(on));
     on!(on_page_changed, |a, page| a.page_changed(page));
+    on!(on_stats_period_changed, |a, p| a.set_stats_period(p));
     on!(on_album_range, |a, first, last| a.set_album_range(first, last));
     on!(on_artist_range, |a, first, last| a.set_artist_range(first, last));
     on!(on_flip_sort, |a, page| a.flip_sort(page));
@@ -4792,6 +4930,44 @@ fn open_in_browser(url: &str) -> bool {
             log(format!("could not open the browser: {e}"));
             false
         }
+    }
+}
+
+/// 12345 → "12,345".
+fn grouped(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Seconds as "3 d 4 h", "5 h 12 min", "12 min" or "40 s".
+fn long_time(secs: u64) -> String {
+    let (d, h, m) = (secs / 86_400, secs / 3600 % 24, secs / 60 % 60);
+    if d > 0 {
+        format!("{d} d {h} h")
+    } else if h > 0 {
+        format!("{h} h {m} min")
+    } else if m > 0 {
+        format!("{m} min")
+    } else {
+        format!("{secs} s")
+    }
+}
+
+/// "2026-11-25" → "Nov 25".
+fn short_date(day: &str) -> String {
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let month = day.get(5..7).and_then(|m| m.parse::<usize>().ok()).and_then(|m| MONTHS.get(m.wrapping_sub(1)));
+    let day_no = day.get(8..10).map(|d| d.trim_start_matches('0')).unwrap_or("");
+    match month {
+        Some(m) => format!("{m} {day_no}"),
+        None => day.to_string(),
     }
 }
 

@@ -7,8 +7,9 @@ import {
     PodcastItem, EpisodeItem,
     IconButton, PillButton, NavItem, Dnd, DropTarget, SeekBar, SearchBox, Artwork, Spectrum, Visualizer, VizInfo, TextField, VizControls, BrandMark, IdleArea,
 } from "widgets.slint";
-import { AlbumsPage, AlbumDetailPage, ArtistsPage, SongsPage, RadioPage, QueuePage, NowPlayingPage, SettingsPage, PlaylistPage, ServerPage, PodcastsPage } from "pages.slint";
+import { AlbumsPage, AlbumDetailPage, ArtistsPage, SongsPage, RadioPage, QueuePage, NowPlayingPage, SettingsPage, PlaylistPage, ServerPage, PodcastsPage, StatisticsPage, StatTile, StatRow, DayBar } from "pages.slint";
 
+export { StatTile, StatRow, DayBar }
 export { Theme, Dnd, VizInfo, AlbumItem, TrackItem, ArtistItem, StationItem, QueueEntry, PlaylistItem, FixCandidate, ServerItem, PodcastItem, EpisodeItem }
 
 component ThemeSwitch inherits Rectangle {
@@ -147,6 +148,19 @@ export component AppWindow inherits Window {
 
     // Radio
     in property <[StationItem]> stations;
+
+    // Statistics page (page 11).
+    in property <int> stats-period: 0;
+    in property <[StatTile]> stats-tiles;
+    in property <[StatTile]> stats-library;
+    in property <[DayBar]> stats-days;
+    in property <string> stats-days-total;
+    in property <[StatRow]> stats-songs;
+    in property <[StatRow]> stats-artists;
+    in property <[StatRow]> stats-albums;
+    in property <[StatRow]> stats-genres;
+    in property <bool> stats-empty: true;
+    callback stats-period-changed(int);
     in property <int> radio-tab: 0;
     /// Radio browsing: the Country, Language, Tag, Format and Bitrate
     /// buttons and the list of the one that's open.
@@ -504,6 +518,12 @@ export component AppWindow inherits Window {
                             selected: root.page == 2;
                             clicked => { root.page = 2; }
                         }
+                        NavItem {
+                            icon: @image-url("icons/stats.svg");
+                            label: "Statistics";
+                            selected: root.page == 11;
+                            clicked => { root.page = 11; }
+                        }
                         Rectangle { height: 14px; }
                         Text {
                             text: "LISTEN";
@@ -697,6 +717,7 @@ export component AppWindow inherits Window {
                                 : root.page == 8 ? "Playlist"
                                 : root.page == 9 ? root.server-name
                                 : root.page == 10 ? (root.podcast-view == 1 ? "Podcast" : "Podcasts")
+                                : root.page == 11 ? "Statistics"
                                 : "";
                             color: Theme.fg;
                             font-size: 24px;
@@ -916,6 +937,21 @@ export component AppWindow inherits Window {
                             add-stream => { add-stream-popup.show(); }
                             play-station(i) => { root.play-station(i); }
                             toggle-favorite(i) => { root.toggle-favorite(i); }
+                        }
+                        if root.page == 11: StatisticsPage {
+                            width: parent.width;
+                            height: parent.height;
+                            period: root.stats-period;
+                            tiles: root.stats-tiles;
+                            library-tiles: root.stats-library;
+                            days: root.stats-days;
+                            days-total: root.stats-days-total;
+                            songs: root.stats-songs;
+                            artists: root.stats-artists;
+                            albums: root.stats-albums;
+                            genres: root.stats-genres;
+                            empty: root.stats-empty;
+                            period-changed(p) => { root.stats-period-changed(p); }
                         }
                         if root.page == 10: PodcastsPage {
                             width: parent.width;
