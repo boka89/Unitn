@@ -35,7 +35,17 @@ const RADIO_LIMIT: u32 = 150;
 const VIZ_BARS: usize = 64;
 const RADIO_TAB_POPULAR: i32 = 0;
 const RADIO_TAB_FAVORITES: i32 = 1;
-const RADIO_TAB_HUNGARY: i32 = 2;
+/// The browse buttons on the Radio page, in their order there.
+const RADIO_PICK_COUNTRY: i32 = 0;
+const RADIO_PICK_LANGUAGE: i32 = 1;
+const RADIO_PICK_TAG: i32 = 2;
+const RADIO_PICK_CODEC: i32 = 3;
+const RADIO_PICK_BITRATE: i32 = 4;
+const RADIO_FILTER_NAMES: [&str; 5] = ["Country", "Language", "Tag", "Format", "Bitrate"];
+/// Minimum bitrates offered by the Bitrate button (0 = any).
+const RADIO_BITRATES: [u32; 5] = [0, 64, 128, 192, 320];
+/// At most this many rows in a browse list (the tag list is long).
+const RADIO_PICKER_ROWS: usize = 400;
 /// Genre chips on the Radio page, in their order there (Radio Browser tags).
 const RADIO_GENRES: [&str; 6] = ["pop", "rock", "jazz", "classical", "electronic", "news"];
 /// No chip selected (search results or a genre).
@@ -54,6 +64,8 @@ enum Bg {
     ThumbsDone,
     ScanDone(Result<scanner::ScanStats, String>),
     Stations { request: u64, result: Result<Vec<Station>, String> },
+    /// The countries, languages, tags or formats of the radio directory.
+    RadioFacets { kind: unitn_core::radio::FacetKind, result: Result<Vec<unitn_core::radio::Facet>, String> },
     /// A cover was downloaded for an album.
     ArtFound,
     /// Artist photo lookup finished.
@@ -123,8 +135,8 @@ struct FixState {
 
 enum StationQuery {
     Top,
-    /// Name search and/or filters: any of the tags, and the country.
-    Filtered { name: String, tags: Vec<String>, country: Option<String> },
+    /// Name search and/or filters.
+    Filtered(unitn_core::radio::Filter),
 }
 
 /// Something in the play queue.
@@ -236,6 +248,28 @@ fn album_key(artist: &str, title: &str) -> String {
 
 fn station_key(s: &Station) -> String {
     format!("radio:{}", s.uuid)
+}
+
+/// The browse list a Radio page button opens, for the ones the directory lists.
+fn facet_kind(which: i32) -> Option<unitn_core::radio::FacetKind> {
+    use unitn_core::radio::FacetKind;
+    match which {
+        RADIO_PICK_COUNTRY => Some(FacetKind::Country),
+        RADIO_PICK_LANGUAGE => Some(FacetKind::Language),
+        RADIO_PICK_TAG => Some(FacetKind::Tag),
+        RADIO_PICK_CODEC => Some(FacetKind::Codec),
+        _ => None,
+    }
+}
+
+fn facet_slot(kind: unitn_core::radio::FacetKind) -> usize {
+    use unitn_core::radio::FacetKind;
+    match kind {
+        FacetKind::Country => 0,
+        FacetKind::Language => 1,
+        FacetKind::Tag => 2,
+        FacetKind::Codec => 3,
+    }
 }
 
 fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
@@ -426,7 +460,19 @@ pub struct App {
     radio_request: u64,
     /// Radio filters; several can be on at once (see `refresh_radio`).
     radio_favorites: bool,
-    radio_hungary: bool,
+    /// Picked in the browse lists: (value sent to the directory, name shown).
+    radio_country: Option<(String, String)>,
+    radio_language: Option<(String, String)>,
+    radio_tag: Option<(String, String)>,
+    radio_codec: Option<(String, String)>,
+    radio_bitrate: u32,
+    /// Browse lists loaded so far (country, language, tag, format).
+    radio_facets: [Option<Vec<unitn_core::radio::Facet>>; 4],
+    /// The open browse list (-1 none), and what each of its rows picks
+    /// (None = "Any").
+    radio_picker: i32,
+    radio_picker_query: String,
+    radio_picker_rows: Vec<Option<(String, String)>>,
     radio_genres: [bool; RADIO_GENRES.len()],
     radio_query: String,
 
@@ -559,7 +605,15 @@ impl App {
             radio_tab: RADIO_TAB_POPULAR,
             radio_request: 0,
             radio_favorites: false,
-            radio_hungary: false,
+            radio_country: None,
+            radio_language: None,
+            radio_tag: None,
+            radio_codec: None,
+            radio_bitrate: 0,
+            radio_facets: Default::default(),
+            radio_picker: -1,
+            radio_picker_query: String::new(),
+            radio_picker_rows: Vec::new(),
             radio_genres: [false; RADIO_GENRES.len()],
             radio_query: String::new(),
             queue: Vec::new(),
@@ -1200,6 +1254,7 @@ impl App {
                     }
                 }
             }
+            Bg::RadioFacets { kind, result } => self.radio_facets_loaded(kind, result),
             Bg::Stations { request, result } => {
                 if request != self.radio_request {
                     return; // a newer request superseded this one
@@ -3079,19 +3134,149 @@ impl App {
         }
     }
 
-    /// The Popular, Favorites and Hungary chips. Popular clears every filter;
-    /// Favorites and Hungary switch on and off.
+    /// The Popular and Favorites chips. Popular clears every filter;
+    /// Favorites switches on and off.
     pub fn load_radio_tab(&mut self, tab: i32) {
         match tab {
             RADIO_TAB_FAVORITES => self.radio_favorites = !self.radio_favorites,
-            RADIO_TAB_HUNGARY => self.radio_hungary = !self.radio_hungary,
             _ => {
                 self.radio_favorites = false;
-                self.radio_hungary = false;
                 self.radio_genres = [false; RADIO_GENRES.len()];
+                self.radio_country = None;
+                self.radio_language = None;
+                self.radio_tag = None;
+                self.radio_codec = None;
+                self.radio_bitrate = 0;
                 self.radio_query.clear();
             }
         }
+        self.refresh_radio();
+    }
+
+    /// The filters of the Radio page as a directory search.
+    fn radio_filter(&self) -> unitn_core::radio::Filter {
+        let mut tags = self.selected_genres();
+        if let Some((tag, _)) = &self.radio_tag {
+            // A picked tag narrows the genre chips: with both, look for the tag.
+            tags = vec![tag.clone()];
+        }
+        unitn_core::radio::Filter {
+            name: self.radio_query.clone(),
+            tags,
+            country: self.radio_country.as_ref().map(|(v, _)| v.clone()),
+            language: self.radio_language.as_ref().map(|(v, _)| v.clone()),
+            codec: self.radio_codec.as_ref().map(|(v, _)| v.clone()),
+            bitrate_min: self.radio_bitrate,
+        }
+    }
+
+    /// Labels of the browse buttons ("Country" or the picked one) and which
+    /// of them have something picked.
+    fn radio_filter_labels(&self) -> (Vec<SharedString>, Vec<bool>) {
+        let picked = [&self.radio_country, &self.radio_language, &self.radio_tag, &self.radio_codec];
+        let mut labels = Vec::new();
+        let mut active = Vec::new();
+        for (i, name) in RADIO_FILTER_NAMES.iter().enumerate() {
+            let label = match picked.get(i) {
+                Some(Some((_, shown))) => Some(shown.clone()),
+                Some(None) => None,
+                None if self.radio_bitrate > 0 => Some(format!("{}+ kbps", self.radio_bitrate)),
+                None => None,
+            };
+            active.push(label.is_some());
+            labels.push(label.unwrap_or_else(|| name.to_string()).into());
+        }
+        (labels, active)
+    }
+
+    /// Opens a browse list: loads it from the directory the first time.
+    pub fn radio_open_picker(&mut self, which: i32) {
+        self.radio_picker = which;
+        self.radio_picker_query.clear();
+        if let Some(ui) = self.ui() {
+            ui.set_radio_picker_title(RADIO_FILTER_NAMES.get(which.max(0) as usize).copied().unwrap_or("").into());
+            ui.set_radio_picker_query("".into());
+        }
+        if let Some(kind) = facet_kind(which) {
+            let slot = which as usize;
+            if self.radio_facets[slot].is_none() {
+                if let Some(ui) = self.ui() {
+                    ui.set_radio_picker_loading(true);
+                    ui.set_radio_picker_items(model(Vec::new()));
+                }
+                let radio = self.radio.clone();
+                let tx = self.bg_tx.clone();
+                thread::spawn(move || {
+                    let result = radio.facets(kind).map_err(|e| format!("{e:#}"));
+                    let _ = tx.send(Bg::RadioFacets { kind, result });
+                });
+                return;
+            }
+        }
+        self.fill_radio_picker();
+    }
+
+    /// Narrows the open browse list to what's typed in its search box.
+    pub fn radio_picker_search(&mut self, text: &str) {
+        self.radio_picker_query = text.trim().to_lowercase();
+        self.fill_radio_picker();
+    }
+
+    /// Shows the rows of the open browse list: "Any" first, then the
+    /// countries (or languages…) with the most stations.
+    fn fill_radio_picker(&mut self) {
+        let which = self.radio_picker;
+        let mut rows: Vec<Option<(String, String)>> = vec![None];
+        let mut items: Vec<SharedString> = vec!["Any".into()];
+        if which == RADIO_PICK_BITRATE {
+            for kbps in RADIO_BITRATES.iter().skip(1) {
+                rows.push(Some((kbps.to_string(), format!("{kbps}+ kbps"))));
+                items.push(format!("{kbps} kbps or better").into());
+            }
+        } else if let Some(Some(facets)) = self.radio_facets.get(which.max(0) as usize) {
+            let query = &self.radio_picker_query;
+            for f in facets.iter().filter(|f| query.is_empty() || f.name.to_lowercase().contains(query.as_str())).take(RADIO_PICKER_ROWS) {
+                rows.push(Some((f.value.clone(), f.name.clone())));
+                items.push(format!("{}  ·  {}", f.name, f.stations).into());
+            }
+        }
+        self.radio_picker_rows = rows;
+        if let Some(ui) = self.ui() {
+            ui.set_radio_picker_loading(false);
+            ui.set_radio_picker_items(model(items));
+        }
+    }
+
+    /// A browse list arrived from the directory.
+    fn radio_facets_loaded(&mut self, kind: unitn_core::radio::FacetKind, result: Result<Vec<unitn_core::radio::Facet>, String>) {
+        let slot = facet_slot(kind);
+        match result {
+            Ok(list) => self.radio_facets[slot] = Some(list),
+            Err(e) => {
+                self.show_toast(&format!("Could not load the list: {e}"));
+                if let Some(ui) = self.ui() {
+                    ui.set_radio_picker_loading(false);
+                }
+                return;
+            }
+        }
+        if self.radio_picker == slot as i32 {
+            self.fill_radio_picker();
+        }
+    }
+
+    /// A row of the open browse list was picked.
+    pub fn radio_picker_pick(&mut self, index: usize) {
+        let Some(row) = self.radio_picker_rows.get(index).cloned() else { return };
+        match self.radio_picker {
+            RADIO_PICK_COUNTRY => self.radio_country = row,
+            RADIO_PICK_LANGUAGE => self.radio_language = row,
+            RADIO_PICK_TAG => self.radio_tag = row,
+            RADIO_PICK_CODEC => self.radio_codec = row,
+            RADIO_PICK_BITRATE => self.radio_bitrate = row.and_then(|(v, _)| v.parse().ok()).unwrap_or(0),
+            _ => return,
+        }
+        self.radio_picker = -1;
         self.refresh_radio();
     }
 
@@ -3100,11 +3285,13 @@ impl App {
     }
 
     /// Shows the stations for the current filters. Selected genres combine
-    /// with OR (jazz or rock), the other filters with AND (Hungarian and jazz
+    /// with OR (jazz or rock), the other filters with AND (German and jazz
     /// or rock, among the favorites, matching the search).
     fn refresh_radio(&mut self) {
-        let genres = self.selected_genres();
-        let filtered = self.radio_hungary || !genres.is_empty();
+        let mut filter = self.radio_filter();
+        filter.name.clear();
+        let filtered = !filter.is_empty();
+        let (labels, active) = self.radio_filter_labels();
         self.radio_tab = if self.radio_favorites {
             RADIO_TAB_FAVORITES
         } else if filtered || !self.radio_query.is_empty() {
@@ -3114,20 +3301,25 @@ impl App {
         };
         if let Some(ui) = self.ui() {
             ui.set_radio_tab(self.radio_tab);
-            ui.set_radio_hungary(self.radio_hungary);
+            ui.set_radio_filter_labels(model(labels));
+            ui.set_radio_filter_active(model(active));
             ui.set_radio_filtered(filtered);
             ui.set_radio_genres(model(self.radio_genres.to_vec()));
         }
         if self.radio_favorites {
             self.radio_request += 1; // cancel pending network results
-            let hungary = self.radio_hungary;
+            // Saved favorites know their country by name, not by code, and
+            // don't know their language.
+            let country = self.radio_country.as_ref().map(|(_, name)| name.clone());
             let favorites: Vec<Station> = self
                 .library
                 .favorite_stations()
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|s| !hungary || s.country.eq_ignore_ascii_case("hungary"))
-                .filter(|s| genres.is_empty() || genres.iter().any(|g| s.has_tag(g)))
+                .filter(|s| country.as_ref().map_or(true, |c| s.country.eq_ignore_ascii_case(c)))
+                .filter(|s| filter.tags.is_empty() || filter.tags.iter().any(|g| s.has_tag(g)))
+                .filter(|s| filter.codec.as_ref().map_or(true, |c| s.codec.eq_ignore_ascii_case(c)))
+                .filter(|s| s.bitrate >= filter.bitrate_min)
                 .collect();
             let status = if favorites.is_empty() && filtered {
                 "No favorites match these filters".to_string()
@@ -3138,11 +3330,7 @@ impl App {
         } else if self.radio_tab == RADIO_TAB_POPULAR {
             self.fetch_stations(StationQuery::Top);
         } else {
-            self.fetch_stations(StationQuery::Filtered {
-                name: self.radio_query.clone(),
-                tags: genres,
-                country: self.radio_hungary.then(|| "HU".to_string()),
-            });
+            self.fetch_stations(StationQuery::Filtered(self.radio_filter()));
         }
     }
 
@@ -3158,10 +3346,10 @@ impl App {
         thread::spawn(move || {
             let result = match query {
                 StationQuery::Top => radio.top(RADIO_LIMIT),
-                StationQuery::Filtered { name, tags, country } => {
-                    // A whole country fits in one longer list.
-                    let limit = if tags.is_empty() && name.is_empty() { 300 } else { RADIO_LIMIT };
-                    radio.filtered(&name, &tags, country.as_deref(), limit)
+                StationQuery::Filtered(filter) => {
+                    // A whole country or language fits in one longer list.
+                    let limit = if filter.tags.is_empty() && filter.name.is_empty() { 300 } else { RADIO_LIMIT };
+                    radio.filtered(&filter, limit)
                 }
             }
             .map_err(|e| format!("{e:#}"));
@@ -4417,6 +4605,9 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_rescan, |a| a.start_scan());
     on!(on_radio_select_tab, |a, t| a.load_radio_tab(t));
     on!(on_radio_genre, |a, g| a.radio_genre(g.max(0) as usize));
+    on!(on_radio_open_picker, |a, k| a.radio_open_picker(k));
+    on!(on_radio_picker_pick, |a, i| a.radio_picker_pick(i.max(0) as usize));
+    on!(on_radio_picker_search, |a, t| a.radio_picker_search(t.as_str()));
     on!(on_add_custom_stream, |a, name, url| a.add_custom_stream(name.as_str(), url.as_str()));
     on!(on_play_station, |a, i| a.play_station(i.max(0) as usize));
     on!(on_toggle_favorite, |a, i| a.toggle_favorite(i.max(0) as usize));

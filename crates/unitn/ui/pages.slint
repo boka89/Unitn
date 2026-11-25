@@ -6,6 +6,7 @@ import {
     ServerItem, PodcastItem, EpisodeItem,
     AlbumItem, TrackItem, ArtistItem, StationItem, QueueEntry, PlaylistItem, TextField,
     IconButton, PillButton, Chip, Artwork, DragSource, Spectrum, SeekBar, Visualizer, EqPanel, VizControls, IdleArea,
+    SearchBox,
 } from "widgets.slint";
 
 component EmptyState inherits VerticalLayout {
@@ -629,12 +630,64 @@ export component SongsPage inherits Rectangle {
     }
 }
 
+/// A filter button of the Radio page: shows the choice and opens its list.
+
+/// A Radio page browse button: the filter (or the choice) and a chevron.
+component FilterButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked;
+
+    height: 30px;
+    width: filter-row.preferred-width + 24px;
+    border-radius: 15px;
+    background: root.selected ? Theme.accent-soft : (touch.has-hover ? Theme.surface-hover : transparent);
+    border-width: 1px;
+    border-color: root.selected ? Theme.accent : Theme.border;
+
+    filter-row := HorizontalLayout {
+        x: 12px;
+        spacing: 4px;
+        Text {
+            text: root.text;
+            color: root.selected ? Theme.accent : Theme.fg;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("icons/chevron-down.svg");
+                width: 14px;
+                height: 14px;
+                colorize: root.selected ? Theme.accent : Theme.fg-muted;
+            }
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 export component RadioPage inherits Rectangle {
     in property <[StationItem]> stations;
     in property <int> tab;
     // Filters: several can be on at once (genres OR, the rest AND).
-    in property <bool> hungary;
     in property <[bool]> genres-on;
+    /// The Country, Language, Tag, Format and Bitrate buttons: their text
+    /// (the choice, or the filter's name) and whether a choice is made.
+    in property <[string]> filter-labels;
+    in property <[bool]> filter-active;
+    /// The open filter's list ("Any" first), its title and search text.
+    in property <string> picker-title;
+    in property <[string]> picker-items;
+    in property <bool> picker-loading;
+    in-out property <string> picker-query;
+    callback open-picker(int);
+    callback picker-search(string);
+    callback picker-pick(int);
     in property <bool> filtered;
     in property <bool> loading;
     in property <string> status;
@@ -654,7 +707,6 @@ export component RadioPage inherits Rectangle {
             alignment: start;
             Chip { text: "Popular"; selected: root.tab == 0; clicked => { root.select-tab(0); } }
             Chip { text: "Favorites"; selected: root.tab == 1; clicked => { root.select-tab(1); } }
-            Chip { text: "Hungary"; selected: root.hungary; clicked => { root.select-tab(2); } }
             Rectangle { width: 12px; }
             for g[i] in ["Pop", "Rock", "Jazz", "Classical", "Electronic", "News"]: Chip {
                 text: g;
@@ -666,6 +718,19 @@ export component RadioPage inherits Rectangle {
                 text: "Add stream URL";
                 icon: @image-url("icons/plus.svg");
                 clicked => { root.add-stream(); }
+            }
+        }
+        // Browse by country, language, tag, format and bitrate.
+        filters := HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            for label[i] in root.filter-labels: FilterButton {
+                text: label;
+                selected: root.filter-active[i];
+                clicked => {
+                    root.open-picker(i);
+                    picker.show();
+                }
             }
         }
         if root.status != "": Text {
@@ -751,6 +816,72 @@ export component RadioPage inherits Rectangle {
                                 size: 34px;
                                 icon-size: 18px;
                                 clicked => { root.toggle-favorite(i); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    picker := PopupWindow {
+        x: 24px;
+        y: filters.y + filters.height + 6px;
+        width: 340px;
+        height: Math.min(440px, root.height - self.y - 12px);
+        close-policy: close-on-click-outside;
+        Rectangle {
+            border-radius: 12px;
+            background: Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            drop-shadow-blur: 20px;
+            drop-shadow-color: #00000050;
+            VerticalLayout {
+                padding: 10px;
+                spacing: 8px;
+                Text {
+                    text: root.picker-title;
+                    color: Theme.fg;
+                    font-size: 14px;
+                    font-weight: 700;
+                }
+                SearchBox {
+                    placeholder: "Search";
+                    text <=> root.picker-query;
+                    edited(t) => { root.picker-search(t); }
+                }
+                if root.picker-loading: Text {
+                    text: "Loading…";
+                    color: Theme.fg-muted;
+                    font-size: 12px;
+                }
+                ListView {
+                    vertical-stretch: 1;
+                    horizontal-scrollbar-policy: always-off;
+                    for item[i] in root.picker-items: Rectangle {
+                        height: 32px;
+                        Rectangle {
+                            x: 0px;
+                            width: parent.width - Theme.scroll-gutter;
+                            border-radius: 6px;
+                            background: pick-touch.has-hover ? Theme.surface-hover : transparent;
+                        }
+                        Text {
+                            x: 10px;
+                            width: parent.width - 20px - Theme.scroll-gutter;
+                            height: parent.height;
+                            text: item;
+                            color: Theme.fg;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        pick-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.picker-pick(i);
+                                picker.close();
                             }
                         }
                     }

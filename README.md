@@ -49,7 +49,7 @@ no account and no tracking.
   subfolder of the album folder), from the song's own tags, or online from the free
   [LRCLIB](https://lrclib.net) (can be turned off)
 - **Internet radio** with ~50,000 stations from the open [Radio Browser](https://www.radio-browser.info),
-  Popular / Favorites / Hungary tabs and your own stream URLs
+  Popular / Favorites, genre chips, browse by country, language, tag, format and bitrate, and your own stream URLs
 - **Playlists**: create, rename, reorder songs (drag the handle, or "Move to top / bottom" in
   the song menu), import/export M3U, and save the queue as a playlist; local songs and songs from
   your servers can be mixed

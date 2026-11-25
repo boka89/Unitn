@@ -148,7 +148,17 @@ export component AppWindow inherits Window {
     // Radio
     in property <[StationItem]> stations;
     in property <int> radio-tab: 0;
-    in property <bool> radio-hungary: false;
+    /// Radio browsing: the Country, Language, Tag, Format and Bitrate
+    /// buttons and the list of the one that's open.
+    in property <[string]> radio-filter-labels: ["Country", "Language", "Tag", "Format", "Bitrate"];
+    in property <[bool]> radio-filter-active: [false, false, false, false, false];
+    in property <string> radio-picker-title;
+    in property <[string]> radio-picker-items;
+    in property <bool> radio-picker-loading;
+    in-out property <string> radio-picker-query;
+    callback radio-open-picker(int);
+    callback radio-picker-search(string);
+    callback radio-picker-pick(int);
     in property <bool> radio-filtered: false;
     in property <[bool]> radio-genres: [false, false, false, false, false, false];
     in property <bool> radio-loading: false;
@@ -887,7 +897,15 @@ export component AppWindow inherits Window {
                             height: parent.height;
                             stations: root.stations;
                             tab: root.radio-tab;
-                            hungary: root.radio-hungary;
+                            filter-labels: root.radio-filter-labels;
+                            filter-active: root.radio-filter-active;
+                            picker-title: root.radio-picker-title;
+                            picker-items: root.radio-picker-items;
+                            picker-loading: root.radio-picker-loading;
+                            picker-query <=> root.radio-picker-query;
+                            open-picker(k) => { root.radio-open-picker(k); }
+                            picker-search(t) => { root.radio-picker-search(t); }
+                            picker-pick(i) => { root.radio-picker-pick(i); }
                             filtered: root.radio-filtered;
                             genres-on: root.radio-genres;
                             loading: root.radio-loading;
