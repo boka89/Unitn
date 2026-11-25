@@ -1292,6 +1292,8 @@ export component SettingsPage inherits Rectangle {
     callback lyrics-online-changed(bool);
     in property <bool> startup-sound;
     callback startup-sound-changed(bool);
+    in property <bool> resume-session;
+    callback resume-session-changed(bool);
     callback theme-selected(int);
     callback density-changed(bool);
     callback opacity-changed(float);
@@ -1467,6 +1469,19 @@ export component SettingsPage inherits Rectangle {
                     }
                     Chip { text: "On"; selected: root.startup-sound; clicked => { root.startup-sound-changed(true); } }
                     Chip { text: "Off"; selected: !root.startup-sound; clicked => { root.startup-sound-changed(false); } }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        width: 180px;
+                        text: "Continue where I left off";
+                        color: Theme.fg-muted;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                    Chip { text: "On"; selected: root.resume-session; clicked => { root.resume-session-changed(true); } }
+                    Chip { text: "Off"; selected: !root.resume-session; clicked => { root.resume-session-changed(false); } }
                     Rectangle { horizontal-stretch: 1; }
                 }
                 Text {

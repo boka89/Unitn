@@ -129,9 +129,18 @@ enum StationQuery {
 
 /// Something in the play queue.
 #[derive(Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 enum Item {
     Track(Track),
     Station(Station),
+}
+
+/// What's playing, kept between starts ("Continue where I left off").
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Session {
+    queue: Vec<Item>,
+    current: Option<usize>,
+    position: f64,
 }
 
 /// Loads a cover and shrinks it to list size (at most 400 px, enough for the
@@ -621,6 +630,7 @@ impl App {
             ui.set_gapless_albums(self.settings.gapless_albums);
             ui.set_lyrics_online(self.settings.lyrics_online);
             ui.set_startup_sound(self.settings.startup_sound);
+            ui.set_resume_session(self.settings.resume_session);
             ui.set_lyrics_open(self.settings.lyrics_open);
             self.show_sort();
             ui.set_sort_ignore_articles(self.settings.sort_ignore_articles);
@@ -636,6 +646,8 @@ impl App {
         self.player.set_crossfade(self.settings.crossfade as f64);
         self.apply_eq();
         self.favorites = self.library.favorite_uuids().unwrap_or_default();
+        // "Continue where I left off": the last song, paused.
+        self.restore_session();
 
         // First run: use the OS music folder.
         if self.library.folders().map(|f| f.is_empty()).unwrap_or(false) {
@@ -3351,6 +3363,7 @@ impl App {
         self.refresh_now_playing();
         self.refresh_position();
         self.update_next();
+        self.save_session();
     }
 
     /// Files or folders dropped on the window: audio files play right away,
@@ -3752,6 +3765,68 @@ impl App {
         if let Some(ui) = self.ui() {
             ui.set_gapless_albums(on);
         }
+        self.update_next();
+    }
+
+    pub fn set_resume_session(&mut self, on: bool) {
+        self.settings.resume_session = on;
+        self.save_settings();
+        self.save_session();
+        if let Some(ui) = self.ui() {
+            ui.set_resume_session(on);
+        }
+    }
+
+    /// Saves the queue, the current song and the position for the next start
+    /// (or removes the saved one when "Continue where I left off" is off).
+    pub fn save_session(&self) {
+        let path = &self.paths.session;
+        if !self.settings.resume_session || self.current.is_none() {
+            let _ = std::fs::remove_file(path);
+            return;
+        }
+        let session = Session { queue: self.queue.clone(), current: self.current, position: self.position };
+        let Ok(json) = serde_json::to_vec(&session) else { return };
+        // Write to a temporary file first, so a crash can't leave half a file.
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, path);
+        }
+    }
+
+    /// Puts the last session's song back on the player, paused; Play
+    /// continues where it was.
+    pub fn restore_session(&mut self) {
+        if !self.settings.resume_session {
+            return;
+        }
+        let Ok(data) = std::fs::read(&self.paths.session) else { return };
+        let Ok(session) = serde_json::from_slice::<Session>(&data) else {
+            log("session: could not read the saved session");
+            return;
+        };
+        let Some(current) = session.current.filter(|&i| i < session.queue.len()) else { return };
+        // A local song that's gone (moved or deleted) can't continue.
+        if let Item::Track(t) = &session.queue[current] {
+            if !t.is_remote() && !is_episode(t) && !t.path.is_file() {
+                log("session: the last song's file is gone; not restoring");
+                return;
+            }
+        }
+        log(format!("session: restoring {} song(s), at {:.0} s", session.queue.len(), session.position));
+        self.queue = session.queue;
+        self.rebuild_queue_model();
+        self.mark_current(Some(current));
+        self.position = 0.0;
+        if let Item::Track(t) = &self.queue[current] {
+            self.duration = Some(t.duration_secs()).filter(|d| *d > 0.0);
+            if session.position > 3.0 {
+                self.position = session.position;
+                self.resume_at = Some((t.path.clone(), session.position));
+            }
+        }
+        self.refresh_now_playing();
+        self.refresh_position();
         self.update_next();
     }
 
@@ -4335,6 +4410,7 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_gapless_albums_changed, |a, on| a.set_gapless_albums(on));
     on!(on_lyrics_online_changed, |a, on| a.set_lyrics_online(on));
     on!(on_startup_sound_changed, |a, on| a.set_startup_sound(on));
+    on!(on_resume_session_changed, |a, on| a.set_resume_session(on));
     on!(on_lyrics_open_changed, |a, open| a.set_lyrics_open(open));
     on!(on_podcast_subscribe, |a, i| a.podcast_subscribe(i.max(0) as usize));
     on!(on_podcast_open, |a, i| a.podcast_open(i.max(0) as usize));

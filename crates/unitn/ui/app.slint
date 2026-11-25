@@ -323,6 +323,8 @@ export component AppWindow inherits Window {
     callback lyrics-online-changed(bool);
     in property <bool> startup-sound: true;
     callback startup-sound-changed(bool);
+    in property <bool> resume-session: true;
+    callback resume-session-changed(bool);
     callback radio-genre(int);
     callback add-custom-stream(string, string);
     callback play-station(int);
@@ -1020,6 +1022,8 @@ export component AppWindow inherits Window {
                             lyrics-online-changed(on) => { root.lyrics-online-changed(on); }
                             startup-sound: root.startup-sound;
                             startup-sound-changed(on) => { root.startup-sound-changed(on); }
+                            resume-session: root.resume-session;
+                            resume-session-changed(on) => { root.resume-session-changed(on); }
                         density-changed(c) => {
                             Theme.compact = c;
                             root.density-changed(c);
