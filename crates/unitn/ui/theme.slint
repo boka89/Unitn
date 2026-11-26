@@ -16,6 +16,12 @@ export global Theme {
     in-out property <bool> mobile: false;
     /// "Cozy" song lists: tighter rows (false = "Comfy").
     in-out property <bool> compact: false;
+    /// Song lists: a double click plays (one click only picks the row).
+    in-out property <bool> double-click-play: false;
+    /// The song row picked by one click in that mode.
+    in-out property <string> clicked-row;
+    /// Long titles scroll instead of being cut off.
+    in-out property <bool> scroll-titles: true;
     /// Window opacity, 0.5 (see-through) .. 1.0 (solid).
     in-out property <float> opacity: 1.0;
     /// Frosted glass (macOS blur) behind the window: always a little see-through.

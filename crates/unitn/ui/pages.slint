@@ -7,7 +7,7 @@ import {
     ServerItem, PodcastItem, EpisodeItem,
     AlbumItem, TrackItem, ArtistItem, StationItem, QueueEntry, PlaylistItem, TextField,
     IconButton, PillButton, Chip, Artwork, DragSource, Spectrum, SeekBar, Visualizer, EqPanel, VizControls, IdleArea,
-    SearchBox,
+    SearchBox, Marquee,
 } from "widgets.slint";
 
 component EmptyState inherits VerticalLayout {
@@ -176,6 +176,14 @@ export component AlbumsPage inherits Rectangle {
     in property <image> artist-image;
     in property <bool> artist-has-image;
     callback play-artist(bool);
+    /// Biography (TheAudioDB): the text, its languages and the one shown.
+    in property <string> artist-bio;
+    in property <bool> artist-bio-loading;
+    in property <[string]> artist-bio-languages;
+    in property <int> artist-bio-language;
+    callback pick-bio-language(int);
+    property <bool> bio-open: false;
+    changed artist-name => { root.bio-open = false; }
 
     // Width for the cards: 20px margins plus the scrollbar lane, so the last
     // column is never under the scrollbar.
@@ -192,28 +200,30 @@ export component AlbumsPage inherits Rectangle {
     property <length> left: Theme.phone ? 8px : 20px;
     // The artist's header above the grid (artist pages only).
     property <length> art-size: Theme.phone ? 112px : 200px;
-    property <length> head-h: !root.artist-mode ? 0px : Theme.phone ? root.art-size + 76px : root.art-size + 36px;
 
-    if root.albums.length > 0: ScrollView {
+    if root.albums.length > 0: album-scroll := ScrollView {
+        // Height of the artist's header above the grid (artist pages only).
+        property <length> head-h: root.artist-mode ? artist-header.preferred-height : 0px;
         horizontal-scrollbar-policy: always-off;
         width: parent.width;
         height: parent.height;
         content-width: self.visible-width;
-        content-height: root.head-h + Math.ceil(root.albums.length / root.cols) * root.cell-h + 32px;
+        content-height: album-scroll.head-h + Math.ceil(root.albums.length / root.cols) * root.cell-h + 32px;
         // Which cards are on screen, reported (one row at a time) so only
         // those pictures are kept in memory, plus a margin.
-        property <int> first-row: Math.max(0, Math.floor((-self.content-y - root.head-h - 8px) / root.cell-h));
+        property <int> first-row: Math.max(0, Math.floor((-self.content-y - album-scroll.head-h - 8px) / root.cell-h));
         property <int> rows-shown: Math.ceil(self.visible-height / root.cell-h) + 1;
         property <int> first-item: self.first-row * root.cols;
         property <int> last-item: Math.min(root.albums.length - 1, (self.first-row + self.rows-shown) * root.cols - 1);
         init => { root.visible-range(self.first-item, self.last-item); root.covers-visible(self.first-item, self.last-item); }
         changed first-item => { root.visible-range(self.first-item, self.last-item); root.covers-visible(self.first-item, self.last-item); }
         changed last-item => { root.visible-range(self.first-item, self.last-item); root.covers-visible(self.first-item, self.last-item); }
-        if root.artist-mode: VerticalLayout {
+        artist-header := VerticalLayout {
+            visible: root.artist-mode;
             x: 0px;
             y: 0px;
             width: parent.width - Theme.scroll-gutter;
-            height: root.head-h;
+            height: root.artist-mode ? self.preferred-height : 0px;
             padding: Theme.phone ? 12px : 24px;
             padding-top: 8px;
             spacing: 12px;
@@ -302,10 +312,72 @@ export component AlbumsPage inherits Rectangle {
                     clicked => { root.play-artist(true); }
                 }
             }
+            if root.artist-bio-loading && root.artist-bio == "": Text {
+                text: "Looking for a biography…";
+                color: Theme.fg-muted;
+                font-size: 12px;
+            }
+            // The biography: a few lines, "Show more" for all of it.
+            if root.artist-bio != "": VerticalLayout {
+                spacing: 6px;
+                // One line's height, to show exactly three lines when closed.
+                line-probe := Text {
+                    visible: false;
+                    height: 0px;
+                    text: "Ag";
+                    font-size: 13px;
+                }
+                Rectangle {
+                    property <length> short: 3 * line-probe.preferred-height;
+                    height: root.bio-open ? bio-text.preferred-height : Math.min(bio-text.preferred-height, self.short);
+                    clip: true;
+                    bio-text := Text {
+                        y: 0px;
+                        width: parent.width;
+                        height: self.preferred-height;
+                        text: root.artist-bio;
+                        color: Theme.fg;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                        vertical-alignment: top;
+                    }
+                    animate height { duration: 160ms; easing: ease-out; }
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 14px;
+                    if bio-text.preferred-height > 3 * line-probe.preferred-height + 1px: Text {
+                        text: root.bio-open ? "Show less" : "Show more";
+                        color: Theme.accent;
+                        font-size: 12px;
+                        font-weight: 600;
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.bio-open = !root.bio-open; }
+                        }
+                    }
+                    Text {
+                        text: "Biography from TheAudioDB";
+                        color: Theme.fg-muted;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                    }
+                }
+                // Other languages of the biography.
+                if root.bio-open && root.artist-bio-languages.length > 1: HorizontalLayout {
+                    alignment: start;
+                    spacing: 6px;
+                    for lang[i] in root.artist-bio-languages: Chip {
+                        text: lang;
+                        selected: i == root.artist-bio-language;
+                        clicked => { root.pick-bio-language(i); }
+                    }
+                }
+            }
         }
         for album[i] in root.albums: AlbumCard {
             x: root.left + Math.mod(i, root.cols) * root.cell-w;
-            y: root.head-h + 8px + Math.floor(i / root.cols) * root.cell-h;
+            y: album-scroll.head-h + 8px + Math.floor(i / root.cols) * root.cell-h;
             art: root.art;
             item: album;
             playing: album.key != "" && album.key == root.playing-album;
@@ -404,6 +476,7 @@ export component TrackRow inherits Rectangle {
         border-radius: root.cozy ? 4px : 6px;
         background: root.item.selected ? (Theme.dark ? #8f72ff55 : #6a46f540)
             : root.current ? Theme.accent-soft
+            : Theme.double-click-play && root.item.key != "" && Theme.clicked-row == root.item.key ? (Theme.dark ? #ffffff1c : #0000001c)
             : root.hovered ? Theme.surface-hover
             : root.striped ? (Theme.dark ? #ffffff0a : #0000000a)
             : transparent;
@@ -556,7 +629,18 @@ export component TrackRow inherits Rectangle {
         TouchArea {
             mouse-cursor: pointer;
             changed has-hover => { root.hovered = self.has-hover; }
-            clicked => { root.activated(); }
+            // Settings → "Play a song with": one click, or one click to
+            // pick the row and two to play it.
+            clicked => {
+                if (Theme.double-click-play) {
+                    Theme.clicked-row = root.item.key;
+                } else {
+                    root.activated();
+                }
+            }
+            double-clicked => {
+                if (Theme.double-click-play) { root.activated(); }
+            }
         }
     }
 
@@ -1765,22 +1849,26 @@ export component NowPlayingPage inherits Rectangle {
                     font-weight: 700;
                     letter-spacing: 1.5px;
                 }
-                Text {
+                if Theme.phone: Text {
                     min-width: 0px;
                     text: root.has-track ? root.title : "Pick an album, a song or a station";
                     color: Theme.fg;
-                    font-size: Theme.phone ? 19px : 30px;
+                    font-size: 19px;
                     font-weight: 800;
-                    wrap: Theme.phone ? TextWrap.word-wrap : TextWrap.no-wrap;
-                    max-height: Theme.phone ? 52px : 60px;
+                    wrap: word-wrap;
+                    max-height: 52px;
                     overflow: elide;
                 }
-                Text {
-                    min-width: 0px;
+                if !Theme.phone: Marquee {
+                    text: root.has-track ? root.title : "Pick an album, a song or a station";
+                    text-color: Theme.fg;
+                    font-size: 30px;
+                    font-weight: 800;
+                }
+                Marquee {
                     text: root.subtitle;
-                    color: Theme.fg-muted;
+                    text-color: Theme.fg-muted;
                     font-size: Theme.phone ? 14px : 15px;
-                    overflow: elide;
                 }
             }
             if !Theme.phone: VerticalLayout {
@@ -2069,6 +2157,16 @@ export component SettingsPage inherits Rectangle {
     callback startup-sound-changed(bool);
     in property <bool> resume-session;
     callback resume-session-changed(bool);
+    in property <bool> launch-at-startup;
+    callback launch-at-startup-changed(bool);
+    in property <bool> keep-awake;
+    callback keep-awake-changed(bool);
+    in property <bool> double-click-play;
+    callback double-click-play-changed(bool);
+    in property <bool> scroll-titles;
+    callback scroll-titles-changed(bool);
+    in property <bool> artist-info-online;
+    callback artist-info-online-changed(bool);
     callback theme-selected(int);
     callback density-changed(bool);
     callback opacity-changed(float);
@@ -2209,6 +2307,43 @@ export component SettingsPage inherits Rectangle {
                     text: "Crossfade blends the end of a song into the next one when one song follows another on its own (not when you skip). "
                         + "\"Keep gapless\" plays songs of the same album without a fade, for live albums and mixes. "
                         + "Lyrics come from a .lrc file next to the song, from the song's tags, or online from LRCLIB (lrclib.net).";
+                    color: Theme.fg-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+
+            SettingsCard {
+                title: "General";
+                if !Theme.mobile: SettingRow {
+                    label: "Open Unitn when I log in";
+                    Chip { text: "On"; selected: root.launch-at-startup; clicked => { root.launch-at-startup-changed(true); } }
+                    Chip { text: "Off"; selected: !root.launch-at-startup; clicked => { root.launch-at-startup-changed(false); } }
+                }
+                if !Theme.mobile: SettingRow {
+                    label: "Keep the computer awake";
+                    Chip { text: "While playing"; selected: root.keep-awake; clicked => { root.keep-awake-changed(true); } }
+                    Chip { text: "Off"; selected: !root.keep-awake; clicked => { root.keep-awake-changed(false); } }
+                }
+                if !Theme.mobile: SettingRow {
+                    label: "Play a song with";
+                    Chip { text: "Single click"; selected: !root.double-click-play; clicked => { root.double-click-play-changed(false); } }
+                    Chip { text: "Double click"; selected: root.double-click-play; clicked => { root.double-click-play-changed(true); } }
+                }
+                SettingRow {
+                    label: "Scroll long titles";
+                    Chip { text: "On"; selected: root.scroll-titles; clicked => { root.scroll-titles-changed(true); } }
+                    Chip { text: "Off"; selected: !root.scroll-titles; clicked => { root.scroll-titles-changed(false); } }
+                }
+                SettingRow {
+                    label: "Artist biographies";
+                    Chip { text: "On"; selected: root.artist-info-online; clicked => { root.artist-info-online-changed(true); } }
+                    Chip { text: "Off"; selected: !root.artist-info-online; clicked => { root.artist-info-online-changed(false); } }
+                }
+                Text {
+                    text: (Theme.mobile ? "" : "\"Keep the computer awake\" stops it from going to sleep while music plays; the screen can still turn off. ")
+                        + "Long song and artist names on the player bar and Now Playing scroll slowly instead of being cut off. "
+                        + "Artist biographies and photos come from TheAudioDB (theaudiodb.com); the biography is shown in your computer's language when there is one.";
                     color: Theme.fg-muted;
                     font-size: 12px;
                     wrap: word-wrap;

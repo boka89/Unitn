@@ -118,5 +118,8 @@ cargo run --release -q -p unitn-core --example server_check -- subsonic localhos
 # ---------------- Lyrics (LRCLIB) and podcasts (Apple directory + a real feed) ----------------
 cargo run --release -q -p unitn-core --example lyrics_check -- "Queen" "Bohemian Rhapsody" "A Night at the Opera" 355 || status=1
 cargo run --release -q -p unitn-core --example podcast_check -- "NASA" || status=1
+# Artist biographies (TheAudioDB): plain, accents missing in the tags
+# ("Celine Dion" is "Céline Dion" there), and a duo name.
+cargo run --release -q -p unitn-core --example artistinfo_check -- "Coldplay" "Celine Dion" "Bob Marley & The Wailers" "Bob Marley" || status=1
 
 exit $status

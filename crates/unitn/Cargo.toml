@@ -29,7 +29,7 @@ objc2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 # App identity for the Windows media overlay (see src/app_id.rs).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_UI_Shell"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Power", "Win32_System_Registry", "Win32_UI_Shell"] }
 
 [build-dependencies]
 slint-build = "1.8"

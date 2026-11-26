@@ -189,11 +189,20 @@ fn lucene_escape(word: &str) -> String {
 impl ArtFetcher {
     /// Finds a photo of an artist: MusicBrainz → Wikidata → Wikimedia Commons
     /// (all free and open). `Ok(None)` means no photo is available.
-    pub fn find_artist_image(&mut self, artist: &str) -> Result<Option<Vec<u8>>> {
+    /// The MusicBrainz ID and name of the artist best matching `artist`.
+    pub fn find_artist(&mut self, artist: &str) -> Result<Option<(String, String)>> {
+        #[derive(Deserialize)]
+        struct Found {
+            id: String,
+            #[serde(default)]
+            score: u32,
+            #[serde(default)]
+            name: String,
+        }
         #[derive(Deserialize)]
         struct ArtistSearch {
             #[serde(default)]
-            artists: Vec<ReleaseGroup>, // same shape: id + score
+            artists: Vec<Found>,
         }
         self.throttle();
         let found: ArtistSearch = self
@@ -204,7 +213,11 @@ impl ArtFetcher {
             .query("limit", "3")
             .call()?
             .into_json()?;
-        let Some(mbid) = found.artists.iter().find(|a| a.score >= MIN_SCORE).map(|a| a.id.clone()) else {
+        Ok(found.artists.into_iter().find(|a| a.score >= MIN_SCORE).map(|a| (a.id, a.name)))
+    }
+
+    pub fn find_artist_image(&mut self, artist: &str) -> Result<Option<Vec<u8>>> {
+        let Some((mbid, _)) = self.find_artist(artist)? else {
             return Ok(None);
         };
 

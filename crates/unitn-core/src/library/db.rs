@@ -75,6 +75,11 @@ CREATE TABLE IF NOT EXISTS remote_tracks (
     stream_ext   TEXT,
     stream_ref   TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS artist_info (
+    key     TEXT PRIMARY KEY,
+    json    TEXT,
+    fetched INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS lyrics (
     key     TEXT PRIMARY KEY,
     body    TEXT,
@@ -821,6 +826,33 @@ impl Library {
         Ok(())
     }
 
+    // ---------------- Artist info (TheAudioDB) ----------------
+
+    /// What was looked up for `artist`: `Some(Some(info))` found,
+    /// `Some(None)` not found in the last 30 days, `None` never looked up
+    /// (or long ago).
+    pub fn cached_artist_info(&self, artist: &str, now: i64) -> Result<Option<Option<crate::artistinfo::ArtistInfo>>> {
+        let mut st = self.conn.prepare_cached("SELECT json, fetched FROM artist_info WHERE key = ?1")?;
+        let row = st
+            .query_map(params![artist.trim().to_lowercase()], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?)))?
+            .next()
+            .transpose()?;
+        Ok(match row {
+            Some((Some(json), _)) => serde_json::from_str(&json).ok().map(Some),
+            Some((None, fetched)) if now - fetched < 30 * 86400 => Some(None),
+            _ => None,
+        })
+    }
+
+    pub fn cache_artist_info(&self, artist: &str, info: Option<&crate::artistinfo::ArtistInfo>, now: i64) -> Result<()> {
+        let json = info.map(serde_json::to_string).transpose()?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO artist_info (key, json, fetched) VALUES (?1, ?2, ?3)",
+            params![artist.trim().to_lowercase(), json, now],
+        )?;
+        Ok(())
+    }
+
     // ---------------- Podcasts ----------------
 
     pub fn subscribe_podcast(&self, show: &crate::podcasts::Show, cover: Option<&Path>, now: i64) -> Result<()> {
@@ -1147,6 +1179,18 @@ fn like_pattern(q: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn caches_artist_info() {
+        let lib = super::Library::open_in_memory().unwrap();
+        assert_eq!(lib.cached_artist_info("Bob Marley", 100).unwrap(), None);
+        let info = crate::artistinfo::ArtistInfo { name: "Bob Marley".into(), ..Default::default() };
+        lib.cache_artist_info("Bob Marley", Some(&info), 100).unwrap();
+        assert_eq!(lib.cached_artist_info("bob marley ", 999_999_999).unwrap(), Some(Some(info)));
+        lib.cache_artist_info("Nobody", None, 100).unwrap();
+        assert_eq!(lib.cached_artist_info("Nobody", 200).unwrap(), Some(None));
+        assert_eq!(lib.cached_artist_info("Nobody", 100 + 31 * 86400).unwrap(), None);
+    }
+
     use super::*;
 
     fn track(path: &str, title: &str, artist: &str, album: &str, no: u32) -> Track {
