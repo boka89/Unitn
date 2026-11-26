@@ -1853,13 +1853,13 @@ export component NowPlayingPage inherits Rectangle {
                 }
                 if !Theme.phone: Marquee {
                     text: root.has-track ? root.title : "Pick an album, a song or a station";
-                    color: Theme.fg;
+                    text-color: Theme.fg;
                     font-size: 30px;
                     font-weight: 800;
                 }
                 Marquee {
                     text: root.subtitle;
-                    color: Theme.fg-muted;
+                    text-color: Theme.fg-muted;
                     font-size: Theme.phone ? 14px : 15px;
                 }
             }

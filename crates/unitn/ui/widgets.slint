@@ -1291,7 +1291,7 @@ export component BrandMark inherits HorizontalLayout {
 /// moves, so a paused title costs nothing.
 export component Marquee inherits Rectangle {
     in property <string> text;
-    in property <color> color;
+    in property <color> text-color;
     in property <length> font-size: 14px;
     in property <int> font-weight: 400;
     min-width: 0px;
@@ -1316,7 +1316,7 @@ export component Marquee inherits Rectangle {
         width: root.moving ? self.preferred-width : parent.width;
         height: parent.height;
         text: root.text;
-        color: root.color;
+        color: root.text-color;
         font-size: root.font-size;
         font-weight: root.font-weight;
         vertical-alignment: center;
