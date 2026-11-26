@@ -2,6 +2,26 @@
 
 Older versions: see the [changelog on the website](https://unitn.bokors.net/changelog/).
 
+## 0.7.4 — 2026-11-26
+
+From **@jo-el414**'s suggestions (#43, #46). Thanks!
+
+- **Artist biographies**: an artist's page shows the first lines of their biography from
+  TheAudioDB with **Show more / Show less**; when open, the other languages it's written in can
+  be picked (remembered for every artist). It's shown in your computer's language when there is
+  one, else English. Names are matched without minding accents (via MusicBrainz, so "Celine Dion"
+  finds "Céline Dion"), and "A & B" or "A feat. B" falls back to A. Genre and country appear
+  next to the album count. Looked up once per artist and kept; Settings → General → Artist
+  biographies turns it off.
+- **Artist photos**: missing ones now come from TheAudioDB first (square, about 700 px), then
+  Wikimedia Commons as before.
+- **Settings → General** (new):
+  - **Open Unitn when I log in** (Windows, macOS, Linux)
+  - **Keep the computer awake while playing** (the screen can still turn off)
+  - **Play a song with**: single click (as before) or double click (one click picks the row)
+  - **Scroll long titles**: long song and artist names on the player bar, the mini player and
+    Now Playing scroll slowly to the end and back instead of being cut off (on by default)
+
 ## 0.7.3 — 2026-11-25
 
 A real artist page, from **@jo-el414**'s ideas (#43). Thanks!

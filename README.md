@@ -57,6 +57,9 @@ no account and no tracking.
   your servers can be mixed
 - **Queue** with drag-to-reorder, shuffle, repeat all / repeat one. Unitn starts where you left
   off: the queue, the song and the position come back when you open it (can be turned off)
+- **Artist pages** with the artist's photo, Play / Shuffle, their albums and a biography from
+  [TheAudioDB](https://www.theaudiodb.com) in your computer's language (several languages; can
+  be turned off). Missing artist photos are downloaded from TheAudioDB, then Wikimedia Commons
 - **Statistics**: plays and listening time for the last 30 days or all time, top songs,
   artists, albums and genres, listening time per day and your library's totals. A song counts
   once you've listened to 30 seconds of it (half of a song shorter than a minute)
@@ -77,7 +80,10 @@ no account and no tracking.
   ⌘/Ctrl+Shift+M mini player …)
 - **Dark and light themes**, or follow the system setting; adjustable window transparency and,
   on macOS, a frosted-glass (blurred) window background
-- **Media keys and OS integration**: macOS Now Playing, Windows media overlay, Linux MPRIS
+- **Media keys and OS integration**: macOS Now Playing, Windows media overlay, Linux MPRIS;
+  optionally opens when you log in and keeps the computer awake while music plays
+- Long titles scroll on the player bar and Now Playing; songs play with one click or, if you
+  prefer, a double click
 - Native Rust audio engine (symphonia + cpal), with no web view and no Electron
 
 ## Download

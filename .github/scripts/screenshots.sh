@@ -69,7 +69,27 @@ mkdir -p "$(dirname "$SETTINGS")"
 shot() { import -window root "$OUT/$1.png"; }
 click() { xdotool mousemove "$1" "$2" click 1; sleep "${3:-1.5}"; }
 
+# A stored biography for one sample artist (they're invented, so TheAudioDB
+# doesn't know them), so the light run shows the biography on the artist page.
+seed_bio() {
+  local db="$HOME/.local/share/unitn/library.sqlite3"
+  [ -f "$db" ] || return 0
+  python3 - "$db" <<'PY'
+import json, sqlite3, sys, time
+en = ("Aurora Lane is an indie pop project known for shimmering synths and night-drive melodies. "
+      "Formed in 2014, the band released two albums before going on a long tour of Northern Europe. ") * 4
+de = "Aurora Lane ist ein Indie-Pop-Projekt mit schimmernden Synthesizern. " * 4
+info = {"id": "1", "name": "Aurora Lane", "bios": [["EN", en.strip()], ["DE", de.strip()]],
+        "thumb": None, "genre": "Indie Pop", "country": "Norway", "formed": "2014"}
+c = sqlite3.connect(sys.argv[1])
+c.execute("INSERT OR REPLACE INTO artist_info (key, json, fetched) VALUES (?, ?, ?)",
+          ("aurora lane", json.dumps(info), int(time.time())))
+c.commit()
+PY
+}
+
 run_theme() { # theme-number name
+  seed_bio
   local servers=""
   # Show a friendly server name instead of the CI machine's host name.
   [ -f /tmp/jellyfin.json ] && servers=", \"servers\": [$(jq -c '.name = "Home Jellyfin"' /tmp/jellyfin.json)]"
@@ -103,6 +123,10 @@ run_theme() { # theme-number name
   shot "$2-artists"
   click 347 170 3          # first artist: their page
   shot "$2-artist"
+  if [ "$2" = light ]; then
+    click 290 392 2        # biography: Show more
+    shot "$2-artist-bio-open"
+  fi
   click 280 34 2           # back arrow: to the Artists grid
   shot "$2-artist-back"
   click 120 117 2          # back to Albums
