@@ -1284,3 +1284,43 @@ export component BrandMark inherits HorizontalLayout {
         }
     }
 }
+
+/// One line of text that, when too long for its space, slowly scrolls to
+/// its end and back (with pauses), instead of being cut off with "…".
+/// Settings → Scroll long titles turns it off. It only animates while it
+/// moves, so a paused title costs nothing.
+export component Marquee inherits Rectangle {
+    in property <string> text;
+    in property <color> color;
+    in property <length> font-size: 14px;
+    in property <int> font-weight: 400;
+    min-width: 0px;
+    preferred-width: label.preferred-width;
+    min-height: label.preferred-height;
+    preferred-height: label.preferred-height;
+    clip: true;
+    property <length> extra: label.preferred-width - self.width;
+    property <bool> moving: Theme.scroll-titles && root.extra > 2px;
+    // 35 pixels a second, at least a second.
+    property <duration> travel: Math.max(1000, root.extra / 1px / 35 * 1000) * 1ms;
+    property <bool> at-end: false;
+    changed text => { root.at-end = false; }
+    Timer {
+        // Rest 2.5 s at each end.
+        interval: root.travel + 2500ms;
+        running: root.moving;
+        triggered => { root.at-end = !root.at-end; }
+    }
+    label := Text {
+        x: root.moving && root.at-end ? -root.extra : 0px;
+        width: root.moving ? self.preferred-width : parent.width;
+        height: parent.height;
+        text: root.text;
+        color: root.color;
+        font-size: root.font-size;
+        font-weight: root.font-weight;
+        vertical-alignment: center;
+        overflow: elide;
+        animate x { duration: root.travel; easing: ease-in-out; }
+    }
+}

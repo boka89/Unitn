@@ -5,7 +5,7 @@ import { Theme } from "theme.slint";
 import {
     AlbumItem, TrackItem, ArtistItem, StationItem, QueueEntry, PlaylistItem, MenuRow, FixCandidate, ServerItem, Chip,
     PodcastItem, EpisodeItem,
-    IconButton, PillButton, NavItem, Dnd, DropTarget, SeekBar, SearchBox, Artwork, Spectrum, Visualizer, VizInfo, TextField, VizControls, BrandMark, IdleArea, SearchHit } from "widgets.slint";
+    IconButton, PillButton, NavItem, Dnd, DropTarget, SeekBar, SearchBox, Artwork, Spectrum, Visualizer, VizInfo, TextField, VizControls, BrandMark, IdleArea, SearchHit, Marquee } from "widgets.slint";
 import { AlbumsPage, AlbumDetailPage, ArtistsPage, SongsPage, RadioPage, QueuePage, NowPlayingPage, SettingsPage, PlaylistPage, ServerPage, PodcastsPage, StatisticsPage, StatTile, StatRow, DayBar } from "pages.slint";
 
 export { StatTile, StatRow, DayBar, SearchHit }
@@ -199,6 +199,11 @@ export component AppWindow inherits Window {
     in property <image> artist-image;
     in property <bool> artist-has-image;
     callback play-artist(bool);
+    in property <string> artist-bio;
+    in property <bool> artist-bio-loading;
+    in property <[string]> artist-bio-languages;
+    in property <int> artist-bio-language: -1;
+    callback pick-bio-language(int);
     /// Back from an artist's page: to the Artists grid.
     function artist-back() {
         root.show-all-albums();
@@ -457,6 +462,17 @@ export component AppWindow inherits Window {
     callback intro-skip();
     in property <bool> resume-session: true;
     callback resume-session-changed(bool);
+    in property <bool> launch-at-startup: false;
+    callback launch-at-startup-changed(bool);
+    in property <bool> keep-awake: false;
+    callback keep-awake-changed(bool);
+    /// One click (not two) plays a song in song lists.
+    in property <bool> double-click-play: false;
+    callback double-click-play-changed(bool);
+    in property <bool> scroll-titles: true;
+    callback scroll-titles-changed(bool);
+    in property <bool> artist-info-online: true;
+    callback artist-info-online-changed(bool);
     callback radio-genre(int);
     callback add-custom-stream(string, string);
     callback play-station(int);
@@ -1333,6 +1349,11 @@ export component AppWindow inherits Window {
                             artist-image: root.artist-image;
                             artist-has-image: root.artist-has-image;
                             play-artist(shuffled) => { root.play-artist(shuffled); }
+                            artist-bio: root.artist-bio;
+                            artist-bio-loading: root.artist-bio-loading;
+                            artist-bio-languages: root.artist-bio-languages;
+                            artist-bio-language: root.artist-bio-language;
+                            pick-bio-language(i) => { root.pick-bio-language(i); }
                         }
                         if root.page == 9: ServerPage {
                             width: parent.width;
@@ -1590,6 +1611,16 @@ export component AppWindow inherits Window {
                             startup-sound-changed(on) => { root.startup-sound-changed(on); }
                             resume-session: root.resume-session;
                             resume-session-changed(on) => { root.resume-session-changed(on); }
+                            launch-at-startup: root.launch-at-startup;
+                            launch-at-startup-changed(on) => { root.launch-at-startup-changed(on); }
+                            keep-awake: root.keep-awake;
+                            keep-awake-changed(on) => { root.keep-awake-changed(on); }
+                            double-click-play: root.double-click-play;
+                            double-click-play-changed(on) => { root.double-click-play-changed(on); }
+                            scroll-titles: root.scroll-titles;
+                            scroll-titles-changed(on) => { root.scroll-titles-changed(on); }
+                            artist-info-online: root.artist-info-online;
+                            artist-info-online-changed(on) => { root.artist-info-online-changed(on); }
                         density-changed(c) => {
                             Theme.compact = c;
                             root.density-changed(c);
@@ -1811,22 +1842,18 @@ export component AppWindow inherits Window {
                         horizontal-stretch: 1;
                         alignment: center;
                         spacing: 2px;
-                        Text {
-                            min-width: 0px;
+                        Marquee {
                             preferred-width: 0px;
                             text: root.np-title;
                             color: Theme.fg;
                             font-size: 14px;
                             font-weight: 600;
-                            overflow: elide;
                         }
-                        Text {
-                            min-width: 0px;
+                        Marquee {
                             preferred-width: 0px;
                             text: root.buffering ? "Buffering…" : root.np-subtitle;
                             color: Theme.fg-muted;
                             font-size: 12px;
-                            overflow: elide;
                         }
                     }
                     VerticalLayout {
@@ -1997,18 +2024,16 @@ export component AppWindow inherits Window {
                         VerticalLayout {
                             alignment: center;
                             spacing: 3px;
-                            Text {
+                            Marquee {
                                 text: root.np-title;
                                 color: Theme.fg;
                                 font-size: 14px;
                                 font-weight: 600;
-                                overflow: elide;
                             }
-                            Text {
+                            Marquee {
                                 text: root.buffering ? "Buffering…" : root.np-subtitle;
                                 color: Theme.fg-muted;
                                 font-size: 12px;
-                                overflow: elide;
                             }
                         }
                     }
@@ -2221,22 +2246,18 @@ export component AppWindow inherits Window {
                     VerticalLayout {
                         alignment: center;
                         spacing: 2px;
-                        Text {
-                            min-width: 0px;
+                        Marquee {
                             preferred-width: 0px;
                             text: root.np-title;
                             color: Theme.fg;
                             font-size: 14px;
                             font-weight: 700;
-                            overflow: elide;
                         }
-                        Text {
-                            min-width: 0px;
+                        Marquee {
                             preferred-width: 0px;
                             text: root.np-subtitle;
                             color: Theme.fg-muted;
                             font-size: 12px;
-                            overflow: elide;
                         }
                         HorizontalLayout {
                             spacing: 2px;

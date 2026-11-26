@@ -2,6 +2,7 @@
 //! radio, music servers, podcasts and lyrics. The UI crate (`unitn`) only talks to this API,
 //! so other front-ends (CLI, mobile) can reuse it later.
 
+pub mod artistinfo;
 pub mod artwork;
 pub mod audio;
 pub mod library;

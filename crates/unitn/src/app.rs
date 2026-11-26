@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use slint::{ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel, Weak};
+use unitn_core::artistinfo;
 use unitn_core::artwork::{AlbumCandidate, ArtFetcher};
 use unitn_core::audio::eq::EqSettings;
 use unitn_core::audio::{PlayState, Player, PlayerEvent, Source, Spectrum};
@@ -58,6 +59,8 @@ enum Bg {
     /// downloaded) for the Artists page: (artist, image file).
     ArtistPhotos(Vec<(String, PathBuf)>),
     ArtistPhotosDone,
+    /// TheAudioDB's biography and photo for an artist (None: not found).
+    ArtistInfo { name: String, info: Option<artistinfo::ArtistInfo> },
     /// Album covers made small enough for lists, decoded off the UI thread.
     Thumbs(Vec<(PathBuf, Option<slint::SharedPixelBuffer<slint::Rgba8Pixel>>)>),
     /// The cover thread finished its list.
@@ -477,6 +480,8 @@ pub struct App {
     open_album: Option<Album>,
     /// The artist whose page is shown (Albums filtered to them).
     open_artist: Option<Artist>,
+    /// TheAudioDB's info on the open artist.
+    artist_info: Option<artistinfo::ArtistInfo>,
     album_from_server: bool,
     /// The open server album was opened from the library's Albums (not a
     /// server's own album page).
@@ -599,6 +604,8 @@ pub struct App {
     buffering_warned: bool,
     logged_second: i64,
     listen: Option<Listen>,
+    /// Keeps the computer awake while playing (Settings).
+    awake: crate::system::StayAwake,
     /// Android: when the session was last saved, and at which position (the
     /// app can be closed by the system at any time, without a clean exit).
     session_saved: (std::time::Instant, f64),
@@ -656,6 +663,7 @@ impl App {
             album_tracks: Vec::new(),
             open_album: None,
             open_artist: None,
+            artist_info: None,
             album_from_server: false,
             album_in_library: false,
             open_server_key: None,
@@ -746,6 +754,7 @@ impl App {
             buffering_warned: false,
             logged_second: -1,
             listen: None,
+            awake: Default::default(),
             session_saved: (std::time::Instant::now(), 0.0),
             stats_period: 0,
         }
@@ -787,6 +796,13 @@ impl App {
             ui.set_glass(self.settings.glass && crate::glass::AVAILABLE);
             ui.global::<Theme>().set_glass(self.settings.glass && crate::glass::AVAILABLE);
             ui.global::<Theme>().set_compact(self.settings.compact_lists);
+            ui.global::<Theme>().set_double_click_play(self.settings.double_click_play);
+            ui.global::<Theme>().set_scroll_titles(self.settings.scroll_titles);
+            ui.set_double_click_play(self.settings.double_click_play);
+            ui.set_scroll_titles(self.settings.scroll_titles);
+            ui.set_keep_awake(self.settings.keep_awake);
+            ui.set_artist_info_online(self.settings.artist_info_online);
+            ui.set_launch_at_startup(crate::system::launch_at_login());
             ui.set_eq_gains(ModelRc::from(self.eq_gains_model.clone()));
             ui.set_app_version(env!("CARGO_PKG_VERSION").into());
             ui.set_log_path(self.paths.log.display().to_string().into());
@@ -1222,6 +1238,7 @@ impl App {
             Bg::Thumbs(done) => self.on_thumbs(done),
             Bg::ArtistPhotos(photos) => self.on_artist_photos(photos),
             Bg::ArtistPhotosDone => self.artist_photos_running = false,
+            Bg::ArtistInfo { name, info } => self.on_artist_info(&name, info),
             Bg::ThumbsDone => {
                 self.thumbs_loading = false;
                 self.load_thumbs();
@@ -2305,10 +2322,18 @@ impl App {
             }
             if download {
                 let skip = ["unknown artist", "various artists", "various", "va"];
+                let mut fetcher = ArtFetcher::new();
                 for name in missing.into_iter().filter(|n| !skip.contains(&n.to_lowercase().as_str()) && !pending.contains(n)) {
-                    std::thread::sleep(Duration::from_millis(1500));
+                    // TheAudioDB's free key allows about 30 requests a minute.
+                    std::thread::sleep(Duration::from_millis(2100));
                     let photo = (|| -> anyhow::Result<Option<PathBuf>> {
-                        let data = ArtFetcher::new().find_artist_image(&name)?;
+                        // TheAudioDB's square photos first, then Wikimedia Commons.
+                        let mut data = artist_info_cached(&library, &name, &mut fetcher)
+                            .and_then(|i| i.thumb)
+                            .and_then(|url| artistinfo::download(&url).ok().flatten());
+                        if data.is_none() {
+                            data = fetcher.find_artist_image(&name)?;
+                        }
                         let path = data.and_then(|d| scanner::save_artist_photo(&d, &dir, &name));
                         library.set_artist_image(&name, path.as_deref())?;
                         Ok(path)
@@ -2605,18 +2630,118 @@ impl App {
         self.open_artist = Some(artist.clone());
         self.reload_library();
         let (image, has_image) = self.thumb(&self.artist_picture(&artist));
-        let songs: usize = self.artist_songs().len();
-        let mut info = plural(self.albums.len(), "album", "albums");
-        if songs > 0 {
-            info = format!("{info} • {}", plural(songs, "song", "songs"));
-        }
         if let Some(ui) = self.ui() {
             ui.set_artist_name(artist.name.as_str().into());
-            ui.set_artist_info(info.into());
             ui.set_artist_image(image);
             ui.set_artist_has_image(has_image);
         }
+        self.artist_info = None;
+        self.show_artist_details();
         self.sync_thumbs();
+        self.load_artist_info(&artist.name);
+    }
+
+    /// The line under the artist's name (genre, country, albums, songs) and
+    /// their biography.
+    fn show_artist_details(&self) {
+        let songs = self.artist_songs().len();
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(i) = &self.artist_info {
+            parts.extend([i.genre.clone(), i.country.clone()].into_iter().filter(|s| !s.is_empty()));
+        }
+        parts.push(plural(self.albums.len(), "album", "albums"));
+        if songs > 0 {
+            parts.push(plural(songs, "song", "songs"));
+        }
+        let (bio, langs, lang) = match &self.artist_info {
+            Some(info) => {
+                let index = info.bio_index(&bio_languages(&self.settings.bio_language));
+                let bio = index.and_then(|i| info.bios.get(i)).map(|(_, b)| b.clone()).unwrap_or_default();
+                let langs: Vec<SharedString> = info.bios.iter().map(|(s, _)| artistinfo::language_name(s).into()).collect();
+                (bio, langs, index.map_or(-1, |i| i as i32))
+            }
+            None => (String::new(), Vec::new(), -1),
+        };
+        let Some(ui) = self.ui() else { return };
+        ui.set_artist_info(parts.join(" • ").into());
+        ui.set_artist_bio(bio.into());
+        ui.set_artist_bio_languages(model(langs));
+        ui.set_artist_bio_language(lang);
+    }
+
+    /// TheAudioDB's biography for the artist page: from the library's cache,
+    /// else looked up in the background.
+    fn load_artist_info(&mut self, name: &str) {
+        if let Some(ui) = self.ui() {
+            ui.set_artist_bio_loading(false);
+        }
+        if !self.settings.artist_info_online {
+            return;
+        }
+        if let Ok(Some(cached)) = self.library.cached_artist_info(name, unix_now()) {
+            self.on_artist_info(name, cached);
+            return;
+        }
+        if artistinfo::candidates(name).is_empty() {
+            return;
+        }
+        if let Some(ui) = self.ui() {
+            ui.set_artist_bio_loading(true);
+        }
+        let (db, tx, name) = (self.paths.database.clone(), self.bg_tx.clone(), name.to_string());
+        thread::spawn(move || {
+            let info = Library::open(&db).ok().and_then(|library| artist_info_cached(&library, &name, &mut ArtFetcher::new()));
+            let _ = tx.send(Bg::ArtistInfo { name, info });
+        });
+    }
+
+    fn on_artist_info(&mut self, name: &str, info: Option<artistinfo::ArtistInfo>) {
+        if self.open_artist.as_ref().map(|a| a.name.as_str()) != Some(name) {
+            return;
+        }
+        if let Some(ui) = self.ui() {
+            ui.set_artist_bio_loading(false);
+        }
+        // No photo of the artist yet: TheAudioDB's square one.
+        let thumb = info.as_ref().and_then(|i| i.thumb.clone());
+        if let Some(url) = thumb.filter(|_| self.settings.download_art && !self.artist_photos.contains_key(name)) {
+            let local = self.open_artist.as_ref().and_then(|a| a.sample.clone()).and_then(|s| scanner::local_artist_image(&s));
+            if local.is_none() && !self.artist_image_pending.contains(name) {
+                let (db, dir, tx, name) = (self.paths.database.clone(), self.paths.artists.clone(), self.bg_tx.clone(), name.to_string());
+                thread::spawn(move || {
+                    let Some(data) = artistinfo::download(&url).ok().flatten() else { return };
+                    let Some(path) = scanner::save_artist_photo(&data, &dir, &name) else { return };
+                    if let Ok(library) = Library::open(&db) {
+                        let _ = library.set_artist_image(&name, Some(&path));
+                    }
+                    let _ = tx.send(Bg::ArtistPhotos(vec![(name, path)]));
+                });
+            }
+        }
+        self.artist_info = info;
+        self.show_artist_details();
+    }
+
+    /// A language picked under the biography: used for every artist.
+    pub fn pick_bio_language(&mut self, index: usize) {
+        let Some(suffix) = self.artist_info.as_ref().and_then(|i| i.bios.get(index)).map(|(s, _)| s.clone()) else { return };
+        self.settings.bio_language = suffix;
+        self.save_settings();
+        self.show_artist_details();
+    }
+
+    pub fn set_artist_info_online(&mut self, on: bool) {
+        self.settings.artist_info_online = on;
+        self.save_settings();
+        if let Some(ui) = self.ui() {
+            ui.set_artist_info_online(on);
+        }
+        if !on {
+            self.artist_info = None;
+            self.show_artist_details();
+        } else if let Some(name) = self.open_artist.as_ref().map(|a| a.name.clone()) {
+            self.load_artist_info(&name);
+        }
     }
 
     /// The songs of the artist whose page is open, album by album as shown.
@@ -4829,6 +4954,7 @@ impl App {
 
     fn refresh_play_state(&mut self) {
         let playing = matches!(self.state, PlayState::Playing | PlayState::Buffering);
+        self.update_awake();
         if let Some(ui) = self.ui() {
             ui.set_playing(playing);
             ui.set_buffering(self.state == PlayState::Buffering);
@@ -4940,6 +5066,49 @@ impl App {
             ui.set_gapless_albums(on);
         }
         self.update_next();
+    }
+
+    pub fn set_double_click_play(&mut self, on: bool) {
+        self.settings.double_click_play = on;
+        self.save_settings();
+        if let Some(ui) = self.ui() {
+            ui.set_double_click_play(on);
+            ui.global::<Theme>().set_double_click_play(on);
+            ui.global::<Theme>().set_clicked_row("".into());
+        }
+    }
+
+    pub fn set_scroll_titles(&mut self, on: bool) {
+        self.settings.scroll_titles = on;
+        self.save_settings();
+        if let Some(ui) = self.ui() {
+            ui.set_scroll_titles(on);
+            ui.global::<Theme>().set_scroll_titles(on);
+        }
+    }
+
+    pub fn set_keep_awake(&mut self, on: bool) {
+        self.settings.keep_awake = on;
+        self.save_settings();
+        self.update_awake();
+        if let Some(ui) = self.ui() {
+            ui.set_keep_awake(on);
+        }
+    }
+
+    /// Awake while playing, when that's on in Settings.
+    fn update_awake(&mut self) {
+        let playing = matches!(self.state, PlayState::Playing | PlayState::Buffering);
+        self.awake.set(self.settings.keep_awake && playing);
+    }
+
+    pub fn set_launch_at_startup(&mut self, on: bool) {
+        if let Err(e) = crate::system::set_launch_at_login(on) {
+            self.show_toast(&format!("Could not change it: {e}"));
+        }
+        if let Some(ui) = self.ui() {
+            ui.set_launch_at_startup(crate::system::launch_at_login());
+        }
     }
 
     pub fn set_resume_session(&mut self, on: bool) {
@@ -5695,6 +5864,12 @@ pub fn connect(ui: &AppWindow, app: &Rc<RefCell<App>>) {
     on!(on_open_artist, |a, i| a.open_artist(i.max(0) as usize));
     on!(on_search_pick, |a, kind, i| a.search_pick(kind, i.max(0) as usize));
     on!(on_play_artist, |a, shuffled| a.play_artist(shuffled));
+    on!(on_double_click_play_changed, |a, on| a.set_double_click_play(on));
+    on!(on_scroll_titles_changed, |a, on| a.set_scroll_titles(on));
+    on!(on_keep_awake_changed, |a, on| a.set_keep_awake(on));
+    on!(on_launch_at_startup_changed, |a, on| a.set_launch_at_startup(on));
+    on!(on_pick_bio_language, |a, i| a.pick_bio_language(i.max(0) as usize));
+    on!(on_artist_info_online_changed, |a, on| a.set_artist_info_online(on));
     on!(on_show_all_albums, |a| a.show_all_albums());
     on!(on_play_album, |a, shuffle| a.play_album(shuffle));
     on!(on_play_album_track, |a, i| a.play_album_track(i.max(0) as usize));
@@ -5914,6 +6089,61 @@ fn open_in_browser(url: &str) -> bool {
             false
         }
     }
+}
+
+/// TheAudioDB's info on `name`: from the library's cache, else looked up
+/// (and cached). `None`: unknown, or the lookup failed.
+fn artist_info_cached(library: &Library, name: &str, fetcher: &mut ArtFetcher) -> Option<artistinfo::ArtistInfo> {
+    let now = unix_now();
+    if let Ok(Some(cached)) = library.cached_artist_info(name, now) {
+        return cached;
+    }
+    match artistinfo::lookup(name, fetcher) {
+        Ok(info) => {
+            let _ = library.cache_artist_info(name, info.as_ref(), now);
+            info
+        }
+        Err(e) => {
+            log(format!("artist info: {name}: {e:#}"));
+            None
+        }
+    }
+}
+
+/// The biography languages to prefer: the one picked in Settings, else the
+/// computer's language.
+fn bio_languages(picked: &str) -> Vec<&'static str> {
+    if let Some(l) = artistinfo::LANGUAGES.iter().map(|(s, _, _)| *s).find(|s| *s == picked) {
+        return vec![l];
+    }
+    system_locales().iter().filter_map(|l| artistinfo::language_for(l)).collect()
+}
+
+/// The computer's languages, most preferred first ("hu_HU", "en-US"…).
+fn system_locales() -> Vec<String> {
+    let mut out: Vec<String> = ["LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG"]
+        .iter()
+        .filter_map(|v| std::env::var(v).ok())
+        .flat_map(|v| v.split(':').map(str::to_string).collect::<Vec<_>>())
+        .filter(|v| !v.is_empty() && v != "C" && v != "POSIX" && !v.starts_with("C."))
+        .collect();
+    #[cfg(target_os = "macos")]
+    if let Ok(o) = std::process::Command::new("defaults").args(["read", "-g", "AppleLanguages"]).output() {
+        // ( "hu-HU", "en-US" )
+        let text = String::from_utf8_lossy(&o.stdout).to_string();
+        out.extend(text.split(['"', ',', '(', ')', '\n', ' ']).map(str::trim).filter(|s| s.len() >= 2).map(str::to_string));
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+        let mut buf = [0u16; 85];
+        // SAFETY: the buffer is LOCALE_NAME_MAX_LENGTH (85) wide characters.
+        let n = unsafe { GetUserDefaultLocaleName(buf.as_mut_ptr(), buf.len() as i32) };
+        if n > 1 {
+            out.insert(0, String::from_utf16_lossy(&buf[..(n - 1) as usize]));
+        }
+    }
+    out
 }
 
 /// 12345 → "12,345".

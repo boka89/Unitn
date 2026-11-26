@@ -20,6 +20,7 @@ mod media;
 #[path = "media_android.rs"]
 mod media;
 mod settings;
+mod system;
 
 #[cfg(target_os = "android")]
 mod android;

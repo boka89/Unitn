@@ -142,11 +142,22 @@ pub struct Settings {
     /// Save lyrics found online with the song: 0 no, 1 as a file next to it,
     /// 2 in the song's tags, 3 both.
     pub lyrics_autosave: u8,
+    /// Artist biographies (and photos) from TheAudioDB.
+    pub artist_info_online: bool,
+    /// Biography language (TheAudioDB suffix such as "DE"); empty = the
+    /// computer's language.
+    pub bio_language: String,
+    /// Play a song with a double click instead of one click.
+    pub double_click_play: bool,
+    /// Long titles scroll instead of being cut off.
+    pub scroll_titles: bool,
+    /// Keep the computer from sleeping while music plays.
+    pub keep_awake: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { theme: THEME_SYSTEM, volume: 0.8, shuffle: false, repeat: 0, opacity: 1.0, viz_style: 0, download_art: true, compact_lists: false, eq_enabled: false, eq_gains: [0.0; 10], eq_preset: 0, eq_preamp: 0.0, eq_open: false, glass: false, servers: Vec::new(), crossfade: 0, gapless_albums: false, lyrics_online: true, lyrics_open: false, startup_sound: true, window_width: None, window_height: None, window_maximized: false, window_x: None, window_y: None, mini_player: false, mini_x: None, mini_y: None, mini_width: None, mini_lyrics: false, album_sort: 0, album_sort_reversed: false, artist_sort: 0, artist_sort_reversed: false, song_sort: 0, song_sort_reversed: false, sort_ignore_articles: true, resume_session: true, lyrics_autosave: 0 }
+        Self { theme: THEME_SYSTEM, volume: 0.8, shuffle: false, repeat: 0, opacity: 1.0, viz_style: 0, download_art: true, compact_lists: false, eq_enabled: false, eq_gains: [0.0; 10], eq_preset: 0, eq_preamp: 0.0, eq_open: false, glass: false, servers: Vec::new(), crossfade: 0, gapless_albums: false, lyrics_online: true, lyrics_open: false, startup_sound: true, window_width: None, window_height: None, window_maximized: false, window_x: None, window_y: None, mini_player: false, mini_x: None, mini_y: None, mini_width: None, mini_lyrics: false, album_sort: 0, album_sort_reversed: false, artist_sort: 0, artist_sort_reversed: false, song_sort: 0, song_sort_reversed: false, sort_ignore_articles: true, resume_session: true, lyrics_autosave: 0, artist_info_online: true, bio_language: String::new(), double_click_play: false, scroll_titles: true, keep_awake: false }
     }
 }
 
