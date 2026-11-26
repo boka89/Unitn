@@ -1,0 +1,244 @@
+[   0.000] Unitn 0.7.4 on linux x86_64
+[   0.005] startup: creating window
+[   2.943] startup: ready
+[   2.944] audio: load File("/tmp/unitn-intro.m4a")
+[   2.945] startup: library shown in 0 ms
+[   2.946] startup: ready in 1 ms
+[   2.947] audio: output device "default", F32, 2 ch, 44100 Hz
+[   2.951] audio: preloading 0.1 MB
+[   2.971] audio: source ready, duration Some(6.521333333333334)
+[   2.971] audio: first chunk 2048 samples, 2 ch, 48000 Hz -> device 2 ch, 44100 Hz
+[   4.079] servers: library has 2 albums from http://localhost:8096|unitn
+[   4.079] art: looking up 1 albums online
+[   4.080] servers: library has 5 songs from http://localhost:8096|unitn
+[   5.381] art: downloaded 1 covers
+[   8.413] intro: 138 of 138 frames shown
+[   9.211] startup: window shown
+[   9.211] media controls attached
+[  17.423] artist info: Aurora Borealis: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Aurora+Borealis%22&fmt=json&limit=3: status code 503
+[  19.427] art: artist photo for Aurora Borealis failed: https://musicbrainz.org/ws/2/artist/4544b3d9-32b1-41d5-905f-ce6182a7d300?inc=url-rels&fmt=json: status code 503
+[  22.847] art: artist photo for Aurora Lane failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Aurora+Lane%22&fmt=json&limit=3: status code 503
+[  25.377] artist info: The Copper Kites: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22The+Copper+Kites%22&fmt=json&limit=3: status code 503
+[  28.930] artist info: Duna Quartet: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Duna+Quartet%22&fmt=json&limit=3: status code 503
+[  33.683] art: artist photo for Kalimba Kids failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Kalimba+Kids%22&fmt=json&limit=3: status code 503
+[  37.103] art: artist photo for Mira Solano failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Mira+Solano%22&fmt=json&limit=3: status code 503
+[  41.016] audio: load Remote("http://localhost:8096/Audio/9025761cde522860bf507198296a2559/stream", Some("mp3"))
+[  41.017] audio: output device "default", F32, 2 ch, 44100 Hz
+[  41.025] audio: server file "audio/mpeg", 0.3 MB
+[  41.025] audio: server file "audio/mpeg", 0.3 MB
+[  41.038] audio: next track prepared
+[  41.038] audio: source ready, duration Some(20.0)
+[  41.038] audio: first chunk 94 samples, 2 ch, 44100 Hz -> device 2 ch, 44100 Hz
+[  41.044] ui: event State(Buffering)
+[  41.044] ui: event Position { position: 0.0, duration: Some(20.0) }
+[  41.044] ui: event State(Playing)
+[  41.325] art: artist photo for Aurora Borealis failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Aurora+Borealis%22&fmt=json&limit=3: status code 503
+[  41.854] artist info: Static Bloom: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Static+Bloom%22&fmt=json&limit=3: status code 503
+[  42.956] art: artist photo for Static Bloom failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Static+Bloom%22&fmt=json&limit=3: status code 503
+[  44.105] ui: event Position { position: 1.124671201814059, duration: Some(20.0) }
+[  45.118] ui: event Position { position: 2.1244444444444444, duration: Some(20.0) }
+[  46.139] ui: event Position { position: 3.149206349206349, duration: Some(20.0) }
+[  47.164] ui: event Position { position: 4.19891156462585, duration: Some(20.0) }
+[  47.392] window: mini player
+[  48.170] ui: event Position { position: 5.198684807256236, duration: Some(20.0) }
+[  49.171] ui: event Position { position: 6.1984580498866215, duration: Some(20.0) }
+[  49.477] window: 380×132 is below the minimum, enlarging
+[  49.745] lyrics: LRCLIB has nothing for "Aurora Lane - Polar Night"
+[  50.173] ui: event Position { position: 7.198231292517007, duration: Some(20.0) }
+[  51.173] ui: event Position { position: 8.223061224489795, duration: Some(20.0) }
+[  52.214] ui: event Position { position: 9.222834467120181, duration: Some(20.0) }
+[  52.756] window: 380×132 is below the minimum, enlarging
+[  52.759] window: full player
+[  53.224] ui: event Position { position: 10.247596371882086, duration: Some(20.0) }
+[  54.231] ui: event Position { position: 11.297301587301588, duration: Some(20.0) }
+[  54.988] ui: event Position { position: 12.022199546485261, duration: Some(20.0) }
+[  56.023] ui: event Position { position: 13.046961451247165, duration: Some(20.0) }
+[  57.041] ui: event Position { position: 14.046734693877552, duration: Some(20.0) }
+[  58.033] ui: event Position { position: 15.096439909297052, duration: Some(20.0) }
+[  59.059] ui: event Position { position: 16.096213151927437, duration: Some(20.0) }
+[  59.979] audio: gapless switch to the next track
+[  59.980] audio: first chunk 94 samples, 2 ch, 44100 Hz -> device 2 ch, 44100 Hz
+[  60.062] ui: event Position { position: 17.095986394557823, duration: Some(20.0) }
+[  61.085] ui: event Position { position: 18.120816326530612, duration: Some(20.0) }
+[  62.104] ui: event Position { position: 19.120589569160998, duration: Some(20.0) }
+[  62.985] ui: event Advanced
+[  62.985] ui: event Position { position: 0.0, duration: Some(20.0) }
+[  63.293] art: artist photo for Aurora Borealis failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Aurora+Borealis%22&fmt=json&limit=3: status code 503
+[  64.164] ui: event Position { position: 1.145124716553288, duration: Some(20.0) }
+[  65.138] ui: event Position { position: 2.194829931972789, duration: Some(20.0) }
+[  66.142] ui: event Position { position: 3.1946031746031744, duration: Some(20.0) }
+[  67.178] ui: event Position { position: 4.19437641723356, duration: Some(20.0) }
+[  68.226] ui: event Position { position: 5.219206349206349, duration: Some(20.0) }
+[  69.233] ui: event Position { position: 6.243968253968254, duration: Some(20.0) }
+[  70.231] ui: event Position { position: 7.293673469387755, duration: Some(20.0) }
+[  71.026] ui: event Position { position: 8.018571428571429, duration: Some(20.0) }
+[  72.021] ui: event Position { position: 9.043333333333333, duration: Some(20.0) }
+[  73.055] ui: event Position { position: 10.093038548752835, duration: Some(20.0) }
+[  74.073] ui: event Position { position: 11.09281179138322, duration: Some(20.0) }
+[  75.105] ui: event Position { position: 12.117641723356009, duration: Some(20.0) }
+[  76.106] ui: event Position { position: 13.142403628117913, duration: Some(20.0) }
+[  77.138] ui: event Position { position: 14.19936507936508, duration: Some(20.0) }
+[  78.196] ui: event Position { position: 15.23326530612245, duration: Some(20.0) }
+[  79.191] ui: event Position { position: 16.240816326530613, duration: Some(20.0) }
+[  79.976] ui: event Position { position: 17.018049886621316, duration: Some(20.0) }
+[  80.979] ui: event Position { position: 18.035873015873015, duration: Some(20.0) }
+[  81.991] ui: event Position { position: 19.047301587301586, duration: Some(20.0) }
+[  82.922] audio: ended
+[  82.943] ui: event Ended
+[  92.463] lyrics: LRCLIB has nothing for "Aurora Lane - Glass Rivers"
+[ 114.991] audio: load Url("https://icecast.walmradio.com:8443/classic")
+[ 115.030] ui: event State(Buffering)
+[ 115.740] audio: stream content type "audio/mpeg"
+[ 115.895] audio: source ready, duration None
+[ 115.895] audio: first chunk 2304 samples, 2 ch, 48000 Hz -> device 2 ch, 44100 Hz
+[ 115.911] ui: event Position { position: 0.0, duration: None }
+[ 115.911] ui: event State(Playing)
+[ 115.951] ui: event StreamTitle("Love Me Tender by The Lettermen - Classic Vinyl on walmradio.com")
+[ 116.919] ui: event Position { position: 1.0247619047619048, duration: None }
+[ 117.926] ui: event Position { position: 2.02453514739229, duration: None }
+[ 118.950] ui: event Position { position: 3.049297052154195, duration: None }
+[ 119.960] ui: event Position { position: 4.04907029478458, duration: None }
+[ 120.974] ui: event Position { position: 5.048843537414966, duration: None }
+[ 121.987] ui: event Position { position: 6.073605442176871, duration: None }
+[ 123.002] ui: event Position { position: 7.098390022675737, duration: None }
+[ 124.022] ui: event Position { position: 8.098163265306123, duration: None }
+[ 125.035] ui: event Position { position: 9.122925170068028, duration: None }
+[ 125.199] ui: event StreamTitle("Lujon by Henry Mancini - Classic Vinyl on walmradio.com")
+[ 126.039] ui: event Position { position: 10.122698412698412, duration: None }
+[ 127.079] ui: event Position { position: 11.172448979591836, duration: None }
+[ 128.080] ui: event Position { position: 12.172222222222222, duration: None }
+[ 129.124] ui: event Position { position: 13.197006802721088, duration: None }
+[ 130.127] ui: event Position { position: 14.221768707482994, duration: None }
+[ 131.138] ui: event Position { position: 15.221541950113378, duration: None }
+[ 132.146] ui: event Position { position: 16.221315192743763, duration: None }
+[ 133.155] ui: event Position { position: 17.24607709750567, duration: None }
+[ 134.162] ui: event Position { position: 18.245850340136055, duration: None }
+[ 134.924] ui: event Position { position: 19.020680272108844, duration: None }
+[ 135.967] ui: event Position { position: 20.045442176870747, duration: None }
+[ 136.973] ui: event Position { position: 21.045215419501133, duration: None }
+[ 137.985] ui: event Position { position: 22.06997732426304, duration: None }
+[ 139.005] ui: event Position { position: 23.094761904761906, duration: None }
+[ 140.011] ui: event Position { position: 24.09453514739229, duration: None }
+[ 140.109] podcasts: subscribed to NASA's Curious Universe (111 episodes)
+[ 141.029] ui: event Position { position: 25.119297052154195, duration: None }
+[ 142.031] ui: event Position { position: 26.1440589569161, duration: None }
+[ 143.075] ui: event Position { position: 27.143832199546484, duration: None }
+[ 144.083] ui: event Position { position: 28.16859410430839, duration: None }
+[ 145.097] ui: event Position { position: 29.168367346938776, duration: None }
+[ 146.106] ui: event Position { position: 30.193151927437643, duration: None }
+[ 147.114] ui: event Position { position: 31.192925170068026, duration: None }
+[ 148.116] ui: event Position { position: 32.21768707482993, duration: None }
+[ 149.120] ui: event Position { position: 33.217460317460315, duration: None }
+[ 150.162] ui: event Position { position: 34.242222222222225, duration: None }
+[ 150.923] ui: event Position { position: 35.017052154195014, duration: None }
+[ 151.947] ui: event Position { position: 36.016825396825396, duration: None }
+[ 152.970] ui: event Position { position: 37.0415873015873, duration: None }
+[ 153.976] ui: event Position { position: 38.04136054421769, duration: None }
+[ 154.978] ui: event Position { position: 39.06612244897959, duration: None }
+[ 155.979] ui: event Position { position: 40.065895691609974, duration: None }
+[ 157.026] ui: event Position { position: 41.09068027210884, duration: None }
+[ 158.030] ui: event Position { position: 42.11544217687075, duration: None }
+[ 159.044] ui: event Position { position: 43.11521541950113, duration: None }
+[ 160.057] ui: event Position { position: 44.139977324263036, duration: None }
+[ 161.060] ui: event Position { position: 45.164739229024946, duration: None }
+[ 162.065] ui: event Position { position: 46.16451247165533, duration: None }
+[ 163.108] ui: event Position { position: 47.189297052154195, duration: None }
+[ 164.110] ui: event Position { position: 48.18907029478458, duration: None }
+[ 164.469] audio: load Remote("https://chrt.fm/track/477F33/traffic.megaphone.fm/NATIONALAERONAUTICSANDSPACEADMINISTRATION6710865215.mp3", Some("mp3"))
+[ 164.469] audio: stream reader finished
+[ 164.478] ui: event State(Buffering)
+[ 164.799] art: artist photo for NASA's Curious Universe failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22NASA%27s+Curious+Universe%22&fmt=json&limit=3: status code 503
+[ 164.917] audio: server file "audio/mpeg", 48.1 MB
+[ 164.951] audio: source ready, duration Some(2088.019591836735)
+[ 164.951] audio: first chunk 2304 samples, 2 ch, 44100 Hz -> device 2 ch, 44100 Hz
+[ 164.963] ui: event Position { position: 0.0, duration: Some(2088.019591836735) }
+[ 164.963] ui: event State(Playing)
+[ 166.008] ui: event Position { position: 1.0247845804988662, duration: Some(2088.019591836735) }
+[ 167.008] ui: event Position { position: 2.0245578231292516, duration: Some(2088.019591836735) }
+[ 168.011] ui: event Position { position: 3.0493197278911564, duration: Some(2088.019591836735) }
+[ 169.027] ui: event Position { position: 4.074081632653061, duration: Some(2088.019591836735) }
+[ 170.036] ui: event Position { position: 5.0738548752834465, duration: Some(2088.019591836735) }
+[ 171.051] ui: event Position { position: 6.098616780045352, duration: Some(2088.019591836735) }
+[ 172.093] ui: event Position { position: 7.123401360544218, duration: Some(2088.019591836735) }
+[ 173.095] ui: event Position { position: 8.123174603174602, duration: Some(2088.019591836735) }
+[ 174.099] ui: event Position { position: 9.147936507936508, duration: Some(2088.019591836735) }
+[ 175.115] ui: event Position { position: 10.147709750566893, duration: Some(2088.019591836735) }
+[ 176.133] ui: event Position { position: 11.172471655328799, duration: Some(2088.019591836735) }
+[ 177.181] ui: event Position { position: 12.197233560090703, duration: Some(2088.019591836735) }
+[ 178.185] ui: event Position { position: 13.197006802721088, duration: Some(2088.019591836735) }
+[ 179.186] ui: event Position { position: 14.221791383219955, duration: Some(2088.019591836735) }
+[ 180.233] ui: event Position { position: 15.24655328798186, duration: Some(2088.019591836735) }
+[ 181.206] ui: event Position { position: 16.246326530612244, duration: Some(2088.019591836735) }
+[ 181.986] ui: event Position { position: 17.021156462585033, duration: Some(2088.019591836735) }
+[ 183.015] ui: event Position { position: 18.02092970521542, duration: Some(2088.019591836735) }
+[ 184.017] ui: event Position { position: 19.045691609977325, duration: Some(2088.019591836735) }
+[ 185.025] ui: event Position { position: 20.04546485260771, duration: Some(2088.019591836735) }
+[ 186.072] ui: event Position { position: 21.070226757369614, duration: Some(2088.019591836735) }
+[ 187.076] ui: event Position { position: 22.09498866213152, duration: Some(2088.019591836735) }
+[ 188.077] ui: event Position { position: 23.119773242630387, duration: Some(2088.019591836735) }
+[ 189.119] ui: event Position { position: 24.11954648526077, duration: Some(2088.019591836735) }
+[ 190.127] ui: event Position { position: 25.144308390022676, duration: Some(2088.019591836735) }
+[ 191.130] ui: event Position { position: 26.144081632653062, duration: Some(2088.019591836735) }
+[ 192.131] ui: event Position { position: 27.168843537414965, duration: Some(2088.019591836735) }
+[ 193.175] ui: event Position { position: 28.19360544217687, duration: Some(2088.019591836735) }
+[ 194.176] ui: event Position { position: 29.193378684807257, duration: Some(2088.019591836735) }
+[ 195.196] ui: event Position { position: 30.21816326530612, duration: Some(2088.019591836735) }
+[ 196.202] ui: event Position { position: 31.242925170068027, duration: Some(2088.019591836735) }
+[ 197.245] ui: event Position { position: 32.26768707482993, duration: Some(2088.019591836735) }
+[ 198.009] ui: event Position { position: 33.0175283446712, duration: Some(2088.019591836735) }
+[ 199.010] ui: event Position { position: 34.04229024943311, duration: Some(2088.019591836735) }
+[ 199.274] audio: load Remote("https://chrt.fm/track/477F33/traffic.megaphone.fm/NATIONALAERONAUTICSANDSPACEADMINISTRATION6710865215.mp3", Some("mp3"))
+[ 199.296] ui: event State(Buffering)
+[ 199.578] art: artist photo for NASA's Curious Universe failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22NASA%27s+Curious+Universe%22&fmt=json&limit=3: status code 503
+[ 199.820] audio: server file "audio/mpeg", 48.1 MB
+[ 199.863] audio: source ready, duration Some(2088.019591836735)
+[ 199.863] audio: first chunk 2304 samples, 2 ch, 44100 Hz -> device 2 ch, 44100 Hz
+[ 199.869] ui: event Position { position: 0.0, duration: Some(2088.019591836735) }
+[ 199.869] ui: event State(Playing)
+[ 199.869] podcasts: resuming at 30 s
+[ 199.912] ui: event Position { position: 30.468072562358277, duration: Some(2088.019591836735) }
+[ 200.647] ui: event Position { position: 31.217891156462585, duration: Some(2088.019591836735) }
+[ 201.657] ui: event Position { position: 32.24265306122449, duration: Some(2088.019591836735) }
+[ 202.657] ui: event Position { position: 33.24242630385488, duration: Some(2088.019591836735) }
+[ 203.418] ui: event Position { position: 34.017256235827666, duration: Some(2088.019591836735) }
+[ 204.462] ui: event Position { position: 35.04201814058957, duration: Some(2088.019591836735) }
+[ 205.470] ui: event Position { position: 36.04179138321995, duration: Some(2088.019591836735) }
+[ 206.480] ui: event Position { position: 37.06657596371882, duration: Some(2088.019591836735) }
+[ 207.496] ui: event Position { position: 38.09133786848073, duration: Some(2088.019591836735) }
+[ 208.542] ui: event Position { position: 39.11609977324263, duration: Some(2088.019591836735) }
+[ 209.551] ui: event Position { position: 40.14086167800453, duration: Some(2088.019591836735) }
+[ 210.592] ui: event Position { position: 41.14063492063492, duration: Some(2088.019591836735) }
+[ 211.600] ui: event Position { position: 42.1904081632653, duration: Some(2088.019591836735) }
+[ 212.620] ui: event Position { position: 43.19018140589569, duration: Some(2088.019591836735) }
+[ 213.647] ui: event Position { position: 44.214943310657596, duration: Some(2088.019591836735) }
+[ 214.666] ui: event Position { position: 45.239705215419505, duration: Some(2088.019591836735) }
+[ 215.419] ui: event Position { position: 46.014535147392294, duration: Some(2088.019591836735) }
+[ 216.446] ui: event Position { position: 47.0392970521542, duration: Some(2088.019591836735) }
+[ 217.463] ui: event Position { position: 48.03907029478458, duration: Some(2088.019591836735) }
+[ 218.473] ui: event Position { position: 49.06385487528345, duration: Some(2088.019591836735) }
+[ 219.491] ui: event Position { position: 50.088616780045356, duration: Some(2088.019591836735) }
+[ 220.513] ui: event Position { position: 51.11337868480726, duration: Some(2088.019591836735) }
+[ 221.564] ui: event Position { position: 52.11315192743764, duration: Some(2088.019591836735) }
+[ 222.566] ui: event Position { position: 53.137913832199544, duration: Some(2088.019591836735) }
+[ 223.585] ui: event Position { position: 54.16269841269841, duration: Some(2088.019591836735) }
+[ 224.595] ui: event Position { position: 55.1624716553288, duration: Some(2088.019591836735) }
+[ 225.606] ui: event Position { position: 56.187233560090704, duration: Some(2088.019591836735) }
+[ 226.623] ui: event Position { position: 57.211995464852606, duration: Some(2088.019591836735) }
+[ 227.671] ui: event Position { position: 58.23675736961451, duration: Some(2088.019591836735) }
+[ 228.431] ui: event Position { position: 59.0115873015873, duration: Some(2088.019591836735) }
+[ 229.458] ui: event Position { position: 60.03634920634921, duration: Some(2088.019591836735) }
+[ 230.473] ui: event Position { position: 61.03612244897959, duration: Some(2088.019591836735) }
+[ 231.482] ui: event Position { position: 62.06090702947846, duration: Some(2088.019591836735) }
+[ 232.500] ui: event Position { position: 63.08566893424036, duration: Some(2088.019591836735) }
+[ 233.503] ui: event Position { position: 64.08544217687074, duration: Some(2088.019591836735) }
+[ 234.546] ui: event Position { position: 65.11020408163266, duration: Some(2088.019591836735) }
+[ 235.554] ui: event Position { position: 66.13496598639456, duration: Some(2088.019591836735) }
+[ 236.575] ui: event Position { position: 67.15975056689342, duration: Some(2088.019591836735) }
+[ 237.584] ui: event Position { position: 68.18451247165532, duration: Some(2088.019591836735) }
+[ 238.631] ui: event Position { position: 69.20927437641723, duration: Some(2088.019591836735) }
+[ 239.642] ui: event Position { position: 70.20904761904762, duration: Some(2088.019591836735) }
+[ 240.653] ui: event Position { position: 71.23380952380953, duration: Some(2088.019591836735) }
+[ 240.693] window: 480×360 is below the minimum, enlarging
+[ 241.687] ui: event Position { position: 72.25859410430839, duration: Some(2088.019591836735) }
+[ 242.419] ui: event Position { position: 73.0084126984127, duration: Some(2088.019591836735) }
+[ 243.431] ui: event Position { position: 74.0331746031746, duration: Some(2088.019591836735) }

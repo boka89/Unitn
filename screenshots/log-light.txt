@@ -1,0 +1,69 @@
+[   0.000] Unitn 0.7.4 on linux x86_64
+[   0.001] startup: creating window
+[   0.016] startup: window shown
+[   0.017] startup: ready
+[   0.017] session: restoring 1 song(s), at 0 s
+[   0.198] startup: library shown in 0 ms
+[   0.198] startup: ready in 0 ms
+[   0.416] media controls attached
+[  15.803] art: artist photo for Aurora Lane failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Aurora+Lane%22&fmt=json&limit=3: status code 503
+[  18.211] art: artist photo for Kalimba Kids failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Kalimba+Kids%22&fmt=json&limit=3: status code 503
+[  24.121] art: artist photo for Static Bloom failed: https://musicbrainz.org/ws/2/artist/?query=artist%3A%22Static+Bloom%22&fmt=json&limit=3: status code 503
+[  26.926] audio: load Remote("http://localhost:8096/Audio/9025761cde522860bf507198296a2559/stream", Some("mp3"))
+[  26.929] audio: output device "default", F32, 2 ch, 44100 Hz
+[  26.939] audio: server file "audio/mpeg", 0.3 MB
+[  26.940] audio: server file "audio/mpeg", 0.3 MB
+[  26.940] ui: event State(Buffering)
+[  26.950] audio: source ready, duration Some(20.0)
+[  26.951] audio: next track prepared
+[  26.951] audio: first chunk 94 samples, 2 ch, 44100 Hz -> device 2 ch, 44100 Hz
+[  26.980] ui: event Position { position: 0.0, duration: Some(20.0) }
+[  26.980] ui: event State(Playing)
+[  30.010] ui: event Position { position: 1.1529931972789116, duration: Some(20.0) }
+[  31.022] ui: event Position { position: 2.185986394557823, duration: Some(20.0) }
+[  32.075] ui: event Position { position: 3.1904308390022678, duration: Some(20.0) }
+[  33.088] ui: event Position { position: 4.219546485260771, duration: Some(20.0) }
+[  33.314] window: mini player
+[  34.100] ui: event Position { position: 5.222063492063492, duration: Some(20.0) }
+[  35.099] ui: event Position { position: 6.250045351473923, duration: Some(20.0) }
+[  35.396] window: 380×132 is below the minimum, enlarging
+[  35.860] ui: event Position { position: 7.0021768707483, duration: Some(20.0) }
+[  36.861] ui: event Position { position: 8.004943310657596, duration: Some(20.0) }
+[  37.863] ui: event Position { position: 9.007845804988662, duration: Some(20.0) }
+[  38.678] window: 380×132 is below the minimum, enlarging
+[  38.680] window: full player
+[  38.905] ui: event Position { position: 10.036190476190477, duration: Some(20.0) }
+[  39.919] ui: event Position { position: 11.063537414965987, duration: Some(20.0) }
+[  40.952] ui: event Position { position: 12.071360544217686, duration: Some(20.0) }
+[  41.940] ui: event Position { position: 13.102698412698413, duration: Some(20.0) }
+[  42.971] ui: event Position { position: 14.10546485260771, duration: Some(20.0) }
+[  43.985] ui: event Position { position: 15.134648526077097, duration: Some(20.0) }
+[  45.004] ui: event Position { position: 16.164943310657595, duration: Some(20.0) }
+[  45.860] audio: gapless switch to the next track
+[  45.861] audio: first chunk 94 samples, 2 ch, 44100 Hz -> device 2 ch, 44100 Hz
+[  46.044] ui: event Position { position: 17.17154195011338, duration: Some(20.0) }
+[  47.077] ui: event Position { position: 18.20043083900227, duration: Some(20.0) }
+[  48.090] ui: event Position { position: 19.207256235827664, duration: Some(20.0) }
+[  48.857] ui: event Advanced
+[  48.858] ui: event Position { position: 0.0, duration: Some(20.0) }
+[  49.867] ui: event Position { position: 1.015124716553288, duration: Some(20.0) }
+[  50.880] ui: event Position { position: 2.014671201814059, duration: Some(20.0) }
+[  51.893] ui: event Position { position: 3.0392290249433107, duration: Some(20.0) }
+[  52.924] ui: event Position { position: 4.063786848072563, duration: Some(20.0) }
+[  53.984] ui: event Position { position: 5.113265306122449, duration: Some(20.0) }
+[  54.985] ui: event Position { position: 6.137800453514739, duration: Some(20.0) }
+[  56.025] ui: event Position { position: 7.162358276643991, duration: Some(20.0) }
+[  57.050] ui: event Position { position: 8.161904761904761, duration: Some(20.0) }
+[  58.053] ui: event Position { position: 9.186462585034013, duration: Some(20.0) }
+[  59.078] ui: event Position { position: 10.186009070294785, duration: Some(20.0) }
+[  60.106] ui: event Position { position: 11.235487528344672, duration: Some(20.0) }
+[  60.867] ui: event Position { position: 12.01013605442177, duration: Some(20.0) }
+[  61.921] ui: event Position { position: 13.034693877551021, duration: Some(20.0) }
+[  62.923] ui: event Position { position: 14.059251700680273, duration: Some(20.0) }
+[  63.953] ui: event Position { position: 15.058798185941043, duration: Some(20.0) }
+[  64.951] ui: event Position { position: 16.10827664399093, duration: Some(20.0) }
+[  65.972] ui: event Position { position: 17.13281179138322, duration: Some(20.0) }
+[  67.026] ui: event Position { position: 18.15734693877551, duration: Some(20.0) }
+[  68.055] ui: event Position { position: 19.181927437641722, duration: Some(20.0) }
+[  68.839] audio: ended
+[  68.845] ui: event Ended
