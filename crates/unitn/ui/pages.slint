@@ -200,17 +200,18 @@ export component AlbumsPage inherits Rectangle {
     property <length> left: Theme.phone ? 8px : 20px;
     // The artist's header above the grid (artist pages only).
     property <length> art-size: Theme.phone ? 112px : 200px;
-    property <length> head-h: root.artist-mode ? artist-header.preferred-height : 0px;
 
-    if root.albums.length > 0: ScrollView {
+    if root.albums.length > 0: album-scroll := ScrollView {
+        // Height of the artist's header above the grid (artist pages only).
+        property <length> head-h: root.artist-mode ? artist-header.preferred-height : 0px;
         horizontal-scrollbar-policy: always-off;
         width: parent.width;
         height: parent.height;
         content-width: self.visible-width;
-        content-height: root.head-h + Math.ceil(root.albums.length / root.cols) * root.cell-h + 32px;
+        content-height: album-scroll.head-h + Math.ceil(root.albums.length / root.cols) * root.cell-h + 32px;
         // Which cards are on screen, reported (one row at a time) so only
         // those pictures are kept in memory, plus a margin.
-        property <int> first-row: Math.max(0, Math.floor((-self.content-y - root.head-h - 8px) / root.cell-h));
+        property <int> first-row: Math.max(0, Math.floor((-self.content-y - album-scroll.head-h - 8px) / root.cell-h));
         property <int> rows-shown: Math.ceil(self.visible-height / root.cell-h) + 1;
         property <int> first-item: self.first-row * root.cols;
         property <int> last-item: Math.min(root.albums.length - 1, (self.first-row + self.rows-shown) * root.cols - 1);
@@ -369,7 +370,7 @@ export component AlbumsPage inherits Rectangle {
         }
         for album[i] in root.albums: AlbumCard {
             x: root.left + Math.mod(i, root.cols) * root.cell-w;
-            y: root.head-h + 8px + Math.floor(i / root.cols) * root.cell-h;
+            y: album-scroll.head-h + 8px + Math.floor(i / root.cols) * root.cell-h;
             art: root.art;
             item: album;
             playing: album.key != "" && album.key == root.playing-album;
