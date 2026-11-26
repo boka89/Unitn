@@ -1,0 +1,32 @@
+--------- beginning of main
+11-26 21:19:22.660  3210  3230 I unitn   : [   0.000] Unitn 0.7.4 on android x86_64
+11-26 21:19:22.661  3210  3230 I unitn   : [   0.004] startup: creating window
+11-26 21:19:22.668  3210  3230 I unitn   : [   0.010] startup: window shown
+11-26 21:19:22.668  3210  3230 I unitn   : [   0.010] startup: ready
+11-26 21:19:22.669  3210  3230 I unitn   : [   0.011] session: restoring 5 song(s), at 0 s
+11-26 21:19:22.678  3210  3230 I unitn   : [   0.020] startup: library shown in 0 ms
+11-26 21:19:22.682  3210  3230 I unitn   : [   0.024] startup: ready in 4 ms
+11-26 21:19:23.181  3210  3230 I unitn   : [   0.524] ui: autoplay https://oxygenmusic.hu:8443/oxygenmusic
+11-26 21:19:23.188  3210  3231 I unitn   : [   0.531] audio: load Url("https://oxygenmusic.hu:8443/oxygenmusic")
+11-26 21:19:23.192  3210  3243 I unitn   : [   0.534] art: looking up 1 albums online
+11-26 21:19:23.209  3210  3231 I unitn   : [   0.551] audio: output device "default", F32, 2 ch, 44100 Hz
+11-26 21:19:23.238  3210  3230 I unitn   : [   0.580] ui: event State(Buffering)
+11-26 21:19:23.902  3210  3252 I unitn   : [   1.245] audio: stream content type "audio/aac"
+11-26 21:19:23.903  3210  3252 I unitn   : [   1.245] audio: ADTS stream AdtsHeader { object_type: 2, rate_index: 7, channel_config: 2, header_len: 7, frame_len: 1011, blocks: 1 }
+11-26 21:19:23.905  3210  3231 I unitn   : [   1.247] audio: source ready, duration None
+11-26 21:19:23.905  3210  3231 I unitn   : [   1.247] audio: first chunk 2048 samples, 2 ch, 22050 Hz -> device 2 ch, 44100 Hz
+11-26 21:19:23.927  3210  3230 I unitn   : [   1.269] ui: event Position { position: 0.0, duration: None }
+11-26 21:19:23.927  3210  3230 I unitn   : [   1.269] ui: event State(Playing)
+11-26 21:19:23.927  3210  3230 I unitn   : [   1.269] ui: event StreamTitle("Empire Of The Sun - Walking On A Dream")
+11-26 21:19:24.930  3210  3230 I unitn   : [   2.272] ui: event Position { position: 1.0007256235827664, duration: None }
+11-26 21:19:25.970  3210  3230 I unitn   : [   3.312] ui: event Position { position: 2.037687074829932, duration: None }
+11-26 21:19:26.970  3210  3230 I unitn   : [   4.312] ui: event Position { position: 3.0350113378684807, duration: None }
+11-26 21:19:27.970  3210  3230 I unitn   : [   5.312] ui: event Position { position: 4.03233560090703, duration: None }
+11-26 21:19:29.010  3210  3230 I unitn   : [   6.352] ui: event Position { position: 5.02968253968254, duration: None }
+11-26 21:19:30.010  3210  3230 I unitn   : [   7.352] ui: event Position { position: 6.095011337868481, duration: None }
+11-26 21:19:31.010  3210  3230 I unitn   : [   8.352] ui: event Position { position: 7.092335600907029, duration: None }
+11-26 21:19:32.943  3210  3230 I unitn   : [  10.285] ui: event Position { position: 8.08968253968254, duration: None }
+11-26 21:19:33.040  3210  3230 I unitn   : [  10.382] ui: event Position { position: 9.13233560090703, duration: None }
+11-26 21:19:34.064  3210  3230 I unitn   : [  11.406] ui: event Position { position: 10.143718820861679, duration: None }
+11-26 21:19:35.080  3210  3230 I unitn   : [  12.423] ui: event Position { position: 11.144444444444444, duration: None }
+11-26 21:19:36.106  3210  3230 I unitn   : [  13.448] ui: event Position { position: 12.14517006802721, duration: None }

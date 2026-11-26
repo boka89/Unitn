@@ -1,0 +1,37 @@
+--------- beginning of main
+11-26 21:17:36.378  2417  2435 I unitn   : [  95.072] ui: event Position { position: 6.008662131519275, duration: Some(24.0) }
+11-26 21:17:36.683  2417  2435 I unitn   : [  95.377] player: next song (asked)
+11-26 21:17:36.686  2417  2437 I unitn   : [  95.380] audio: load File("/storage/emulated/0/Music/TT/ES/2.wav")
+11-26 21:17:36.690  2417  2904 I unitn   : [  95.384] audio: preloading 4.0 MB
+11-26 21:17:36.722  2417  2437 I unitn   : [  95.416] audio: source ready, duration Some(24.0)
+11-26 21:17:36.722  2417  2437 I unitn   : [  95.416] audio: first chunk 2304 samples, 2 ch, 44100 Hz -> device 2 ch, 44100 Hz
+11-26 21:17:36.727  2417  2435 I unitn   : [  95.421] ui: event State(Buffering)
+11-26 21:17:36.727  2417  2435 I unitn   : [  95.421] ui: event Position { position: 0.0, duration: Some(24.0) }
+11-26 21:17:36.727  2417  2435 I unitn   : [  95.421] ui: event State(Playing)
+11-26 21:17:37.892  2417  2435 I unitn   : [  96.586] ui: event Position { position: 1.1333333333333333, duration: Some(24.0) }
+11-26 21:17:38.920  2417  2435 I unitn   : [  97.614] ui: event Position { position: 2.1760090702947847, duration: Some(24.0) }
+11-26 21:17:39.950  2417  2435 I unitn   : [  98.644] ui: event Position { position: 3.1733333333333333, duration: Some(24.0) }
+11-26 21:17:40.950  2417  2435 I unitn   : [  99.644] ui: event Position { position: 4.233718820861678, duration: Some(24.0) }
+11-26 21:17:41.710  2417  2435 I unitn   : [ 100.404] ui: event Position { position: 5.007006802721088, duration: Some(24.0) }
+11-26 21:17:42.757  2417  2435 I unitn   : [ 101.451] ui: event Position { position: 6.006666666666667, duration: Some(24.0) }
+11-26 21:17:43.757  2417  2435 I unitn   : [ 102.451] ui: event Position { position: 7.003990929705216, duration: Some(24.0) }
+11-26 21:17:44.797  2417  2435 I unitn   : [ 103.491] ui: event Position { position: 8.05467120181406, duration: Some(24.0) }
+11-26 21:17:45.791  2417  2435 I unitn   : [ 104.485] ui: event Position { position: 9.055396825396825, duration: Some(24.0) }
+11-26 21:17:46.832  2417  2435 I unitn   : [ 105.526] ui: event Position { position: 10.086666666666666, duration: Some(24.0) }
+11-26 21:17:47.832  2417  2435 I unitn   : [ 106.526] ui: event Position { position: 11.083990929705216, duration: Some(24.0) }
+11-26 21:17:48.832  2417  2435 I unitn   : [ 107.526] ui: event Position { position: 12.103061224489796, duration: Some(24.0) }
+11-26 21:17:49.872  2417  2435 I unitn   : [ 108.566] ui: event Position { position: 13.146666666666667, duration: Some(24.0) }
+11-26 21:17:50.872  2417  2435 I unitn   : [ 109.566] ui: event Position { position: 14.143990929705215, duration: Some(24.0) }
+11-26 21:17:51.872  2417  2435 I unitn   : [ 110.566] ui: event Position { position: 15.141337868480726, duration: Some(24.0) }
+11-26 21:17:52.913  2417  2435 I unitn   : [ 111.607] ui: event Position { position: 16.183990929705214, duration: Some(24.0) }
+11-26 21:17:53.945  2417  2435 I unitn   : [ 112.639] ui: event Position { position: 17.181337868480725, duration: Some(24.0) }
+11-26 21:17:54.958  2417  2435 I unitn   : [ 113.652] ui: event Position { position: 18.178662131519275, duration: Some(24.0) }
+11-26 21:17:55.965  2417  2435 I unitn   : [ 114.660] ui: event Position { position: 19.198662131519274, duration: Some(24.0) }
+11-26 21:17:56.726  2417  2435 I unitn   : [ 115.420] ui: event Position { position: 20.01467120181406, duration: Some(24.0) }
+11-26 21:17:57.766  2417  2435 I unitn   : [ 116.460] ui: event Position { position: 21.011995464852607, duration: Some(24.0) }
+11-26 21:17:58.766  2417  2435 I unitn   : [ 117.460] ui: event Position { position: 22.009342403628118, duration: Some(24.0) }
+11-26 21:17:59.806  2417  2435 I unitn   : [ 118.500] ui: event Position { position: 23.051995464852606, duration: Some(24.0) }
+11-26 21:18:00.716  2417  2437 I unitn   : [ 119.410] audio: ended
+11-26 21:18:00.728  2417  2435 I unitn   : [ 119.422] ui: event Ended
+11-26 21:19:06.458  2417  2435 I unitn   : [ 185.152] likes: added /storage/emulated/0/Music/TT/ES/2.wav
+11-26 21:19:09.488  2417  2435 I unitn   : [ 188.182] likes: removed /storage/emulated/0/Music/TT/ES/2.wav

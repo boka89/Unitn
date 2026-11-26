@@ -1,0 +1,2 @@
+11-26 21:19:58.200  4264  4264 E et.bokors.unitn: Not starting debugger since process cannot load the jdwp agent.
+11-26 21:20:07.786  4337  4337 E et.bokors.unitn: Not starting debugger since process cannot load the jdwp agent.

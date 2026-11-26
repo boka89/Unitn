@@ -1,0 +1,3 @@
+    fallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@b2da49f finished=false mParentInputMethodManager.isActive()=false mServedView=null}
+  mInputShown=true
+  mFallbackInputConnection=RemoteInputConnectionImpl{connection=android.view.inputmethod.BaseInputConnection@df80e8e finished=false mParentInputMethodManager.isActive()=true mServedView=null}

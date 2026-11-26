@@ -1,0 +1,36 @@
+--------- beginning of main
+11-26 21:19:58.925  4264  4284 I unitn   : [   0.000] Unitn 0.7.4 on android x86_64
+11-26 21:19:58.926  4264  4284 I unitn   : [   0.001] startup: creating window
+11-26 21:19:58.937  4264  4284 I unitn   : [   0.012] startup: window shown
+11-26 21:19:58.937  4264  4284 I unitn   : [   0.012] startup: ready
+11-26 21:19:58.938  4264  4284 I unitn   : [   0.013] session: restoring 1 song(s), at 8 s
+11-26 21:19:58.938  4264  4284 I unitn   : [   0.013] startup: library shown in 0 ms
+11-26 21:19:58.939  4264  4284 I unitn   : [   0.014] startup: ready in 0 ms
+11-26 21:19:58.939  4264  4287 I unitn   : [   0.014] audio: load File("/data/user/0/net.bokors.unitn/files/tmp/unitn-intro.m4a")
+11-26 21:19:59.216  4264  4287 I unitn   : [   0.291] audio: output device "default", F32, 2 ch, 44100 Hz
+11-26 21:19:59.511  4264  4299 I unitn   : [   0.586] audio: preloading 0.1 MB
+11-26 21:19:59.521  4264  4287 I unitn   : [   0.596] audio: source ready, duration Some(6.521333333333334)
+11-26 21:19:59.521  4264  4287 I unitn   : [   0.596] audio: first chunk 2048 samples, 2 ch, 48000 Hz -> device 2 ch, 44100 Hz
+11-26 21:20:04.496  4264  4286 I unitn   : [   5.571] intro: 120 of 138 frames shown
+11-26 21:20:08.281  4337  4370 I unitn   : [   0.000] Unitn 0.7.4 on android x86_64
+11-26 21:20:08.294  4337  4370 I unitn   : [   0.014] startup: creating window
+11-26 21:20:08.313  4337  4370 I unitn   : [   0.032] startup: window shown
+11-26 21:20:08.313  4337  4370 I unitn   : [   0.032] startup: ready
+11-26 21:20:08.313  4337  4370 I unitn   : [   0.033] session: restoring 1 song(s), at 8 s
+11-26 21:20:08.314  4337  4370 I unitn   : [   0.033] startup: library shown in 0 ms
+11-26 21:20:08.314  4337  4370 I unitn   : [   0.034] startup: ready in 0 ms
+11-26 21:20:09.685  4337  4370 I unitn   : [   1.404] ui: autoplay https://oxygenmusic.hu:8443/oxygenmusic
+11-26 21:20:09.685  4337  4371 I unitn   : [   1.404] audio: load Url("https://oxygenmusic.hu:8443/oxygenmusic")
+11-26 21:20:09.717  4337  4371 I unitn   : [   1.437] audio: output device "default", F32, 2 ch, 44100 Hz
+11-26 21:20:09.780  4337  4370 I unitn   : [   1.500] ui: event State(Buffering)
+11-26 21:20:10.141  4337  4400 I unitn   : [   1.860] audio: stream content type "audio/aac"
+11-26 21:20:10.141  4337  4400 I unitn   : [   1.860] audio: ADTS stream AdtsHeader { object_type: 2, rate_index: 7, channel_config: 2, header_len: 7, frame_len: 740, blocks: 1 }
+11-26 21:20:10.146  4337  4371 I unitn   : [   1.866] audio: source ready, duration None
+11-26 21:20:10.146  4337  4371 I unitn   : [   1.866] audio: first chunk 2048 samples, 2 ch, 22050 Hz -> device 2 ch, 44100 Hz
+11-26 21:20:10.147  4337  4370 I unitn   : [   1.866] ui: event Position { position: 0.0, duration: None }
+11-26 21:20:10.147  4337  4370 I unitn   : [   1.866] ui: event State(Playing)
+11-26 21:20:10.208  4337  4370 I unitn   : [   1.927] ui: event StreamTitle("Empire Of The Sun - Walking On A Dream")
+11-26 21:20:11.217  4337  4370 I unitn   : [   2.936] ui: event Position { position: 1.0462131519274376, duration: None }
+11-26 21:20:12.242  4337  4370 I unitn   : [   3.961] ui: event Position { position: 2.03859410430839, duration: None }
+11-26 21:20:13.310  4337  4370 I unitn   : [   5.029] ui: event Position { position: 3.0931519274376416, duration: None }
+11-26 21:20:14.326  4337  4370 I unitn   : [   6.045] ui: event Position { position: 4.13936507936508, duration: None }
