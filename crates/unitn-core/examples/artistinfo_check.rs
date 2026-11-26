@@ -24,7 +24,10 @@ fn main() {
                 println!("  bios: {langs:?}\n  thumb: {:?}\n  {en}…", info.thumb);
                 let photo = info.thumb.as_deref().map(|u| artistinfo::download(u).ok().flatten().map(|d| d.len()));
                 println!("  photo bytes: {photo:?}");
-                if info.bios.is_empty() {
+                if info.bio_index(&["EN"]).is_none_or(|i| info.bios[i].0 != "EN") {
+                    println!("RESULT artist info {name}: FAILED: no English biography");
+                    failed = true;
+                } else if info.bios.is_empty() {
                     println!("RESULT artist info {name}: FAILED: no biography");
                     failed = true;
                 } else {

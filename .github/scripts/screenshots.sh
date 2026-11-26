@@ -124,7 +124,7 @@ run_theme() { # theme-number name
   click 347 170 3          # first artist: their page
   shot "$2-artist"
   if [ "$2" = light ]; then
-    click 290 392 2        # biography: Show more
+    click 290 352 2        # biography: Show more
     shot "$2-artist-bio-open"
   fi
   click 280 34 2           # back arrow: to the Artists grid
@@ -235,6 +235,8 @@ run_theme() { # theme-number name
   xdotool key Escape; sleep 1
   click 200 697            # Settings (gear next to the theme switch)
   shot "$2-settings"
+  xdotool mousemove 700 400; for _ in 1 2 3 4 5 6 7; do xdotool click 5; sleep 0.1; done; sleep 1
+  shot "$2-settings-general"  # further down: the General card
   if [ -f /tmp/jellyfin.json ]; then
     click 120 527 6        # the Jellyfin server in the sidebar
     shot "$2-server"

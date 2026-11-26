@@ -62,7 +62,11 @@ impl ArtistInfo {
         let name = text("strArtist")?;
         let bios = LANGUAGES
             .iter()
-            .filter_map(|(suffix, _, _)| text(&format!("strBiography{suffix}")).map(|b| (suffix.to_string(), clean_bio(&b))))
+            .filter_map(|(suffix, _, _)| {
+                // English is "strBiographyEN" in the docs, plain "strBiography" in some answers.
+                let text = text(&format!("strBiography{suffix}")).or_else(|| if *suffix == "EN" { text("strBiography") } else { None });
+                text.map(|b| (suffix.to_string(), clean_bio(&b)))
+            })
             .collect();
         Some(Self {
             id: text("idArtist").unwrap_or_default(),

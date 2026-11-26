@@ -320,8 +320,15 @@ export component AlbumsPage inherits Rectangle {
             // The biography: a few lines, "Show more" for all of it.
             if root.artist-bio != "": VerticalLayout {
                 spacing: 6px;
+                // One line's height, to show exactly three lines when closed.
+                line-probe := Text {
+                    visible: false;
+                    height: 0px;
+                    text: "Ag";
+                    font-size: 13px;
+                }
                 Rectangle {
-                    property <length> short: 3 * 20px;
+                    property <length> short: 3 * line-probe.preferred-height;
                     height: root.bio-open ? bio-text.preferred-height : Math.min(bio-text.preferred-height, self.short);
                     clip: true;
                     bio-text := Text {
@@ -339,7 +346,7 @@ export component AlbumsPage inherits Rectangle {
                 HorizontalLayout {
                     alignment: start;
                     spacing: 14px;
-                    if bio-text.preferred-height > 3 * 20px: Text {
+                    if bio-text.preferred-height > 3 * line-probe.preferred-height + 1px: Text {
                         text: root.bio-open ? "Show less" : "Show more";
                         color: Theme.accent;
                         font-size: 12px;
